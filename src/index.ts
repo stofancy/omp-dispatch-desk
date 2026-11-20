@@ -101,7 +101,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	let ui: Ctx | undefined;
 	let inboxSinceInput = 0;
 	let urgentSinceInput = 0;
-	const pending = new Map<string, string>(); // toolCallId → 远端写入摘要
+	const pending = new Map<string, { summary: string; bash: boolean }>(); // toolCallId → 远端写入摘要
 	let replyNote: string | undefined; // 上一次回复的检查结果，下一次请求提醒模型
 	let awayNote: string | undefined; // 用户离开一段时间后回来：这期间的变化
 	let awayDelivered = false; // 离开提示已随用户那条消息交付，那一轮答完就清掉
@@ -577,15 +577,17 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			if (to && to !== "all" && to !== "Main") screen.handedTo(to);
 		}
 		const summary = remoteWrite(e.toolName, e.args);
-		if (summary && e.toolCallId) pending.set(e.toolCallId, summary);
+		if (summary && e.toolCallId) pending.set(e.toolCallId, { summary, bash: e.toolName === "bash" });
 	});
 	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean }, ctx: Ctx) => {
-		const summary = e.toolCallId ? pending.get(e.toolCallId) : undefined;
+		const write = e.toolCallId ? pending.get(e.toolCallId) : undefined;
 		const s = sessionOf(ctx);
-		if (!summary || !s || !e.toolCallId) return;
+		if (!write || !s || !e.toolCallId) return;
 		pending.delete(e.toolCallId);
 		const by = isMain(ctx) ? "main" : (ctx.agent?.id ?? "subagent");
-		record({ sid: s, kind: "action", line: by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name, summary, ok: !e.isError, by });
+		// bash 的退出码是整串命令最后一条的：写入后面常跟着查看、diff 之类的核对，它们非零不等于写入失败，只能记「没把握」
+		const result = !e.isError ? { ok: true } : write.bash ? { unsure: true } : { ok: false };
+		record({ sid: s, kind: "action", line: by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name, summary: write.summary, ...result, by });
 	});
 
 	// ---------- 任务表工具（调度器模式关着时报错） ----------

@@ -53,7 +53,8 @@ export function correctionLine(l: Table, k: Correction): string {
 
 function describeAction(l: Table, ev: Ev, paired: boolean): string {
 	if (ev.kind === "inbox") return `${when(ev.ts)} inbox ${ev.source}: ${ev.who ?? ""} @ ${ev.where ?? ""}`;
-	return `${when(ev.ts)} ${ev.ok === false ? "FAILED " : ""}${ev.summary}${ev.by && ev.by !== "main" ? ` (by ${ev.by})` : ""}${paired ? pairing(l, ev) : ""}`;
+	const status = ev.ok === false ? "FAILED " : ev.unsure ? "UNVERIFIED (command exited non-zero; check the real state) " : "";
+	return `${when(ev.ts)} ${status}${ev.summary}${ev.by && ev.by !== "main" ? ` (by ${ev.by})` : ""}${paired ? pairing(l, ev) : ""}`;
 }
 
 const decisionLine = (d: Ev) => `- (${d.line}) ${String(d.date ?? d.ts.slice(0, 10))}: ${d.text}`;

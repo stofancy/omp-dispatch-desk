@@ -4,6 +4,7 @@
 一个地方第一次读只记下当前位置，不回放历史。私信和 @ 到你的消息标为紧急。同一条消息推送已经写过的不会重复。
 配置里没归到任务（没写 line）的频道，配了 triage 时不紧急的消息先分拣：无关的只记进 state/triage.jsonl，不送；推送把这类消息留给这里。
 """
+import gzip
 import http.client
 import json
 import re
@@ -21,22 +22,28 @@ TOKEN = read_secret(SLACK["user_token"])
 RETRY_WAIT = [3, 10]  # 网络不稳时大的响应常被中途截断（IncompleteRead）或超时：同一个请求隔几秒再试，最多三次
 
 
+def fetch(req):
+    with urllib.request.urlopen(req, timeout=60) as res:
+        raw = res.read()
+        return json.loads(gzip.decompress(raw) if res.headers.get("Content-Encoding") == "gzip" else raw)
+
+
 def api(method, **params):
-    req = urllib.request.Request(f"https://slack.com/api/{method}?{urllib.parse.urlencode(params)}", headers={"Authorization": f"Bearer {TOKEN}"})
+    # 要 gzip：#team 7 天一页 50 条不压缩约 200 KB，这台机器上几乎每次被截断；压缩后约 35 KB
+    req = urllib.request.Request(f"https://slack.com/api/{method}?{urllib.parse.urlencode(params)}",
+                                 headers={"Authorization": f"Bearer {TOKEN}", "Accept-Encoding": "gzip"})
     for wait in RETRY_WAIT:
         try:
-            with urllib.request.urlopen(req, timeout=60) as res:
-                data = json.load(res)
+            data = fetch(req)
             break
         except urllib.error.HTTPError:
             raise  # HTTP 错误（限流、权限）不是网络抖动，照原样报
-        except (http.client.HTTPException, OSError):
+        except (http.client.HTTPException, OSError, EOFError):
             time.sleep(wait)
     else:
         try:
-            with urllib.request.urlopen(req, timeout=60) as res:
-                data = json.load(res)
-        except (http.client.HTTPException, OSError):
+            data = fetch(req)
+        except (http.client.HTTPException, OSError, EOFError):
             RETRY_WAIT.clear()  # 三次都失败，网络多半整个不通：这次运行剩下的请求只试一次，免得一次运行拖到几十分钟
             raise
     if not data.get("ok"):

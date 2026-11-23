@@ -220,21 +220,16 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 				} catch {}
 				continue;
 			}
-			pending.push({ f, ev, tier: tierOf(l, ev, rule.recent_done_days, now), at });
+			pending.push({ f, ev, tier: tierOf(l, ev), at });
 		}
 		const timing = { quietMs: rule.inbox_quiet_seconds * 1000, maxMs: rule.inbox_max_seconds * 1000, digestMs: rule.inbox_digest_minutes * 60_000 };
-		const send = withInput || due(pending.filter(p => p.tier !== "drop"), now, timing);
+		if (!withInput && !due(pending, now, timing)) return;
 		const lines: string[] = [];
 		let urgent = false;
-		for (const { f, ev, tier } of pending) {
-			if (tier !== "drop" && !send) continue;
+		for (const { f, ev } of pending) {
 			try {
 				renameSync(join(INBOX_NEW, f), join(INBOX_CLAIMED, f)); // 认领：只有一个进程能改名成功
 			} catch {
-				continue;
-			}
-			if (tier === "drop") {
-				append({ sid: session ?? "", kind: "inbox_dropped", source: ev.source, who: ev.who, where: ev.where, link: ev.link, line: ev.line });
 				continue;
 			}
 			const { task, tag } = route(l, ev);

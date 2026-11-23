@@ -16,7 +16,6 @@ export interface RuleSettings {
 	inbox_quiet_seconds: number; // 马上送的消息：对方停这么久没再发就送
 	inbox_max_seconds: number; // 马上送的消息：对方一直在发，最多等这么久
 	inbox_digest_minutes: number; // 攒着的消息：没有马上送的、用户也没说话，最晚等这么久单独送
-	recent_done_days: number; // 完成多少天内的任务还算「最近完成」：相关消息攒着送，更早的丢掉
 }
 
 const DEFAULTS: RuleSettings = {
@@ -31,7 +30,6 @@ const DEFAULTS: RuleSettings = {
 	inbox_quiet_seconds: 60,
 	inbox_max_seconds: 300,
 	inbox_digest_minutes: 30,
-	recent_done_days: 7,
 };
 type NumKey = { [K in keyof RuleSettings]: RuleSettings[K] extends number ? K : never }[keyof RuleSettings];
 
@@ -56,7 +54,6 @@ export function settings(): RuleSettings {
 		inbox_quiet_seconds: num("inbox_quiet_seconds"),
 		inbox_max_seconds: num("inbox_max_seconds"),
 		inbox_digest_minutes: num("inbox_digest_minutes"),
-		recent_done_days: num("recent_done_days"),
 	};
 }
 

@@ -22,7 +22,6 @@ export interface Task {
 	watch: string[]; // 要盯的外部输入：链接或标识
 	review?: Review; // 最近一次审查的结论：没有通过的审查，任务记不成「完成」
 	reopened?: boolean; // 记成完成之后又打开过：再完成要整个任务重新审，事项各自审过不算
-	doneAt?: string; // 记成完成的时间：和最近完成的任务相关的消息攒着送，完成久了的丢掉
 }
 export interface Table {
 	tasks: Map<string, Task>;
@@ -91,9 +90,7 @@ function fold(l: Table, ev: Ev): void {
 			if (wasDone && !isDone(t.status)) {
 				t.review = undefined; // 重新打开的任务：之前的审查不算数，再完成要重新审
 				t.reopened = true;
-				t.doneAt = undefined;
 			}
-			if (!wasDone && isDone(t.status)) t.doneAt = ev.ts;
 			const removed = new Set(strings(ev.watch_remove));
 			t.watch = [...new Set([...t.watch, ...strings(ev.watch_add)])].filter(w => !removed.has(w));
 			break;

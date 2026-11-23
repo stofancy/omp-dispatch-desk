@@ -173,8 +173,8 @@ def main():
         key = f"{ch}-{m['ts']}"
         if seen("slack", key):
             continue  # 推送已经写过
-        if ch.startswith("D") and m.get("bot_id"):
-            print(f"{time.strftime('%F %T')} dropped bot DM {key}")  # 日历、DX 这类 bot 的私信不送，只记一行
+        if (ch.startswith("D") or meta["name"] == "group DM") and m.get("bot_id"):
+            print(f"{time.strftime('%F %T')} dropped bot DM {key}")  # 日历、DX 这类 bot 发的私信和群私信不送，只记一行
             continue
         urgent = ch.startswith("D") or f"<@{ME}>" in m.get("text", "")
         pending.append({"key": key, "m": m, "top": top, "urgent": urgent, "line": None if urgent else meta.get("line"),

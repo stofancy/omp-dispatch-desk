@@ -47,6 +47,14 @@ test("Slack 多步上传：任何一步 ok:false 或最后不是 ok 就不记", 
 	expect(run(c, '{"ok":true,"upload_url":"u"}\n{"ok":true,"files":[{"id":"F1"}]}')?.type).toBe("slack.completeUploadExternal");
 });
 
+test("git push：只看输出——前缀 timeout/带空格环境变量也记；强推目标取对；dry-run 命令不记", () => {
+	const ok = "To github.com:o/r.git\n + 1a2b3c4...5d6e7f8 x -> x (forced update)\n";
+	expect(run('timeout 60 GIT_SSH_COMMAND="ssh -p 22" git push -f origin x', ok)).toEqual({ type: "git push", target: "github.com:o/r x", link: "github.com:o/r" });
+	expect(run('git -c "a=$(echo b)" push origin x', ok)?.type).toBe("git push");
+	expect(run("git push --dry-run origin x", ok)).toBeUndefined();
+	expect(run("git fetch", "From github.com:o/r\n   1a2b3c4..5d6e7f8  x -> origin/x\n")).toBeUndefined();
+});
+
 test("gh：建 PR、评论有地址才记；只读的 gh pr view 不记", () => {
 	expect(run("gh pr create --fill", "https://github.com/o/r/pull/7\n")).toEqual({ type: "pr create", target: "https://github.com/o/r/pull/7", link: "https://github.com/o/r/pull/7" });
 	expect(run("gh pr comment 7 -b hi", "https://github.com/o/r/pull/7#issuecomment-123\n")?.link).toBe("https://github.com/o/r/pull/7#issuecomment-123");

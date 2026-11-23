@@ -40,7 +40,8 @@ export function commands(cmd: string): string[] {
 }
 
 const SLACK_METHOD = /\b(chat\.(?:postMessage|update|delete|scheduleMessage)|reactions\.(?:add|remove)|files\.(?:upload|completeUploadExternal))\b/;
-const GIT_PUSH = /^[\s&]*(?:\w+=\S*\s+)*(?:(?:env|command|sudo)\s+)?(?:\S*\/)?git(?:\s+(?:-C\s+\S+|-c\s+\S+|--?[\w-]+(?:=\S+)?))*\s+push\b(?!.*(?:--dry-run|\s-n\b))/;
+// 只用来排除：dry-run 的输出和真推送一样，只能靠命令里的开关区分
+const DRY_RUN = /\bgit\b[^\n]*\bpush\b[^\n]*(?:--dry-run|\s-[a-zA-Z]*n\b)/;
 const GH_WRITE = /^[\s&]*(?:\w+=\S*\s+)*(?:\S*\/)?gh\s+(pr|issue|release)\s+(create|edit|comment|merge|close|reopen|review|ready)\b/;
 const GH_API = /^[\s&]*(?:\w+=\S*\s+)*(?:\S*\/)?gh\s+api\b.*(?:\s-X\s*(?:POST|PATCH|PUT|DELETE)\b|--method[\s=](?:POST|PATCH|PUT|DELETE)\b|\s(?:-f|-F|--field|--raw-field|--input)\s)/i;
 const GH_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#(?:issuecomment|pullrequestreview|discussion_r)-?\d+)?/;
@@ -93,9 +94,9 @@ function pushReceipt(out: string): Action | undefined {
 	const to = /^To\s+(\S+)\s*$/m.exec(out)?.[1];
 	if (!to || LOCAL_PATH.test(to)) return undefined; // 推到本地路径不算对外动作
 	if (/^\s*!\s.*\[(?:remote )?rejected\]|^\s*!\s/m.test(out) || /\berror: failed to push\b/.test(out)) return undefined;
-	const ok = /^\s*(?:[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}|\*\s+\[new (?:branch|tag)\]|\+\s+[0-9a-f]{7,}\.{3}[0-9a-f]{7,}|-\s+\[deleted\]).*?(?:->|\s)(\S+)\s*$/m.exec(out);
+	const ok = /^\s*(?:[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}|\*\s+\[new (?:branch|tag)\]|\+\s+[0-9a-f]{7,}\.{3}[0-9a-f]{7,}|-\s+\[deleted\]).*$/m.exec(out);
 	if (!ok) return undefined;
-	const ref = (/->\s*(\S+)\s*$/m.exec(ok[0]) ?? [])[1] ?? ok[1];
+	const ref = /->\s*(\S+)/.exec(ok[0])?.[1] ?? /\[deleted\]\s+(\S+)/.exec(ok[0])?.[1] ?? "";
 	const url = noUserinfo(to).replace(/\.git$/, "");
 	return { type: "git push", target: `${url} ${ref}`, link: url };
 }
@@ -121,7 +122,7 @@ export function receiptOf(toolName: string, input: Record<string, unknown> | und
 	if (toolName === "bash") {
 		const cmd = String(input?.command ?? "");
 		const simples = commands(cmd);
-		if (simples.some(c => GIT_PUSH.test(c))) {
+		if (!DRY_RUN.test(cmd)) {
 			const a = pushReceipt(resultText);
 			if (a) return a;
 		}

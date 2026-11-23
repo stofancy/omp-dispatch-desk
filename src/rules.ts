@@ -13,9 +13,27 @@ export interface RuleSettings {
 	cold_read: boolean; // 对外消息发出前冷读
 	owner_model: string; // 任务的负责 agent 用什么模型（模型名或 @角色）；空 = 跟主会话一样
 	stall_minutes: number; // 子代理多久没交回就叫醒主会话去看一眼（之后每次翻倍）；0 = 不叫
+	inbox_quiet_seconds: number; // 马上送的消息：对方停这么久没再发就送
+	inbox_max_seconds: number; // 马上送的消息：对方一直在发，最多等这么久
+	inbox_digest_minutes: number; // 攒着的消息：没有马上送的、用户也没说话，最晚等这么久单独送
+	recent_done_days: number; // 完成多少天内的任务还算「最近完成」：相关消息攒着送，更早的丢掉
 }
 
-const DEFAULTS: RuleSettings = { language: "", report_lines: 15, wake_lines: 5, max_asks: 3, away_hours: 2, cold_read: true, owner_model: "", stall_minutes: 15 };
+const DEFAULTS: RuleSettings = {
+	language: "",
+	report_lines: 15,
+	wake_lines: 5,
+	max_asks: 3,
+	away_hours: 2,
+	cold_read: true,
+	owner_model: "",
+	stall_minutes: 15,
+	inbox_quiet_seconds: 60,
+	inbox_max_seconds: 300,
+	inbox_digest_minutes: 30,
+	recent_done_days: 7,
+};
+type NumKey = { [K in keyof RuleSettings]: RuleSettings[K] extends number ? K : never }[keyof RuleSettings];
 
 // config.json 和外部事件源共用，写错一处不能让主会话丢掉规则：读不了或类型不对就用默认值
 export function settings(): RuleSettings {
@@ -25,7 +43,7 @@ export function settings(): RuleSettings {
 	} catch (err) {
 		logError("config.json", err);
 	}
-	const num = (k: "report_lines" | "wake_lines" | "max_asks" | "away_hours" | "stall_minutes") => (Number.isFinite(raw[k]) && (raw[k] as number) >= 0 ? (raw[k] as number) : DEFAULTS[k]);
+	const num = (k: NumKey) => (Number.isFinite(raw[k]) && (raw[k] as number) >= 0 ? (raw[k] as number) : DEFAULTS[k]);
 	return {
 		language: typeof raw.language === "string" ? raw.language : DEFAULTS.language,
 		report_lines: num("report_lines"),
@@ -35,6 +53,10 @@ export function settings(): RuleSettings {
 		cold_read: typeof raw.cold_read === "boolean" ? raw.cold_read : DEFAULTS.cold_read,
 		owner_model: typeof raw.owner_model === "string" ? raw.owner_model.trim() : DEFAULTS.owner_model,
 		stall_minutes: num("stall_minutes"),
+		inbox_quiet_seconds: num("inbox_quiet_seconds"),
+		inbox_max_seconds: num("inbox_max_seconds"),
+		inbox_digest_minutes: num("inbox_digest_minutes"),
+		recent_done_days: num("recent_done_days"),
 	};
 }
 

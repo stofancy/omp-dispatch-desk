@@ -1,5 +1,5 @@
 {
-  "rules": { "language": "中文", "report_lines": 15, "wake_lines": 5, "max_asks": 3, "away_hours": 2, "cold_read": true, "owner_model": "", "stall_minutes": 15 },
+  "rules": { "language": "中文", "report_lines": 15, "wake_lines": 5, "max_asks": 3, "away_hours": 2, "cold_read": true, "owner_model": "", "stall_minutes": 15, "inbox_quiet_seconds": 60, "inbox_max_seconds": 300, "inbox_digest_minutes": 30, "recent_done_days": 7 },
   "line_pattern": "^\\s*([A-Z][A-Z0-9]+-\\d+)\\b",
   "slack": {
     "domain": "your-workspace",

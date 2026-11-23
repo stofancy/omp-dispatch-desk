@@ -13,7 +13,7 @@ if (!slack) throw new Error("config.json 里没有 slack 配置");
 const APP_TOKEN = readSecret(slack.app_token);
 const USER_TOKEN = readSecret(slack.user_token);
 
-interface SlackMessage { type?: string; subtype?: string; channel?: string; channel_type?: string; user?: string; text?: string; ts?: string; thread_ts?: string }
+interface SlackMessage { type?: string; subtype?: string; channel?: string; channel_type?: string; user?: string; bot_id?: string; text?: string; ts?: string; thread_ts?: string }
 interface LookupBody { ok: boolean; user?: { real_name?: string; name?: string }; channel?: { name?: string } }
 interface OpenBody { ok: boolean; url?: string; error?: string }
 interface Envelope { type?: string; envelope_id?: string; reason?: string; payload?: { event?: SlackMessage } }
@@ -41,6 +41,10 @@ async function handle(ev: SlackMessage): Promise<void> {
 	if (ev.subtype && ev.subtype !== "thread_broadcast") return;
 	const watched = slack.channels[ev.channel];
 	const direct = ev.channel_type === "im" || ev.channel_type === "mpim";
+	if (direct && ev.bot_id) {
+		log(`dropped bot DM ${ev.channel} ${ev.ts}`); // 日历、DX 这类 bot 的私信不送，只记一行
+		return;
+	}
 	const mention = (ev.text ?? "").includes(`<@${slack.me}>`);
 	const watch = slackWatch();
 	const task = watch.channels.get(ev.channel) ?? watch.threads.get(`${ev.channel}:${ev.thread_ts ?? ev.ts}`);

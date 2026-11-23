@@ -25,6 +25,7 @@ import { createScreen, messageRow, readReviewing } from "./screen";
 import { hasFeishu, readConfig, runSetup } from "./setup";
 import { OFF_MESSAGE, isOn, setOn } from "./switch";
 import { type Ev, GENERAL, type Table, agentTaken, append, doneBlocker, isReviewerName, logError, needsReview, openTasks, readTable, taskOfAgent, taskOfReviewer, today } from "./table";
+import { type Tier, due, tierOf } from "./tiers";
 import { decidedFor, renderViews, since, snapshot, taskCard } from "./views";
 import { matchTask } from "./watch";
 
@@ -193,21 +194,25 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	};
 	const showStatus = (ctx: Ctx) => ctx.ui.setStatus?.(STATUS_KEY, isOn(session) ? status(ctx) : undefined);
 
-	// ---------- 外部消息：只交给打开了调度器模式、用户最近发话的会话；一拍内的合成一条消息 ----------
+	// ---------- 外部消息：只交给打开了调度器模式、用户最近发话的会话；分三档（见 tiers.ts），到点的连同攒着的合成一条消息 ----------
+	// 没到点的留在 inbox/new，等的时间按文件写入时间算：会话重启也不丢、不重算
 
-	const claimInbox = () => {
+	const claimInbox = (withInput = false) => {
 		if (!existsSync(INBOX_NEW)) return;
 		const names = readdirSync(INBOX_NEW).filter((n: string) => n.endsWith(".json")).sort();
 		if (!names.length) return;
-		const last = readTable().lastInputSid;
-		if (last && last !== session && isOn(last)) return; // 开着几个调度器会话：只交给你最近发话的那个
+		const l = readTable();
+		if (l.lastInputSid && l.lastInputSid !== session && isOn(l.lastInputSid)) return; // 开着几个调度器会话：只交给你最近发话的那个
 		mkdirSync(INBOX_CLAIMED, { recursive: true });
-		const lines: string[] = [];
-		let urgent = false;
+		const rule = settings();
+		const now = Date.now();
+		const pending: Array<{ f: string; ev: InboxFile; tier: Tier; at: number }> = [];
 		for (const f of names) {
 			let ev: InboxFile;
+			let at: number;
 			try {
 				ev = JSON.parse(readFileSync(join(INBOX_NEW, f), "utf8"));
+				at = statSync(join(INBOX_NEW, f)).mtimeMs;
 			} catch (err) {
 				logError(`inbox ${f}`, err);
 				try {
@@ -215,12 +220,24 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 				} catch {}
 				continue;
 			}
+			pending.push({ f, ev, tier: tierOf(l, ev, rule.recent_done_days, now), at });
+		}
+		const timing = { quietMs: rule.inbox_quiet_seconds * 1000, maxMs: rule.inbox_max_seconds * 1000, digestMs: rule.inbox_digest_minutes * 60_000 };
+		const send = withInput || due(pending.filter(p => p.tier !== "drop"), now, timing);
+		const lines: string[] = [];
+		let urgent = false;
+		for (const { f, ev, tier } of pending) {
+			if (tier !== "drop" && !send) continue;
 			try {
 				renameSync(join(INBOX_NEW, f), join(INBOX_CLAIMED, f)); // 认领：只有一个进程能改名成功
 			} catch {
 				continue;
 			}
-			const { task, tag } = route(readTable(), ev);
+			if (tier === "drop") {
+				append({ sid: session ?? "", kind: "inbox_dropped", source: ev.source, who: ev.who, where: ev.where, link: ev.link, line: ev.line });
+				continue;
+			}
+			const { task, tag } = route(l, ev);
 			record({ sid: session ?? "", kind: "inbox", line: task, source: ev.source, who: ev.who, where: ev.where, link: ev.link, urgent: !!ev.urgent });
 			inboxSinceInput++;
 			if (ev.urgent) urgentSinceInput++;
@@ -240,7 +257,8 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 				display: true,
 				attribution: "agent",
 			},
-			{ deliverAs: "nextTurn", triggerTurn: true },
+			// 跟用户这次发话一起送：放进上下文，不另起一轮
+			{ deliverAs: "nextTurn", triggerTurn: !withInput },
 		);
 	};
 
@@ -395,6 +413,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		if (!naming.getSessionName?.()) await naming.setSessionName?.(TITLE); // 会话还没名字：赶在 omp 按第一句话自动起名之前定下来
 		inboxSinceInput = 0; // 外部事件计数 = 用户上次发话以来到的
 		urgentSinceInput = 0;
+		claimInbox(true); // 攒着的消息跟用户这次发话一起送
 		// 离开多久从「上次发话」和「上次给用户的回复」里较晚的那个算；斜杠命令不算回来
 		const l0 = readTable();
 		const base = [l0.lastInput, l0.lastReply].filter((t): t is string => !!t).sort().at(-1);

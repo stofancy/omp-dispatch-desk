@@ -53,8 +53,8 @@ export function correctionLine(l: Table, k: Correction): string {
 
 function describeAction(l: Table, ev: Ev, paired: boolean): string {
 	if (ev.kind === "inbox") return `${when(ev.ts)} inbox ${ev.source}: ${ev.who ?? ""} @ ${ev.where ?? ""}`;
-	const status = ev.ok === false ? "FAILED " : ev.unsure ? "UNVERIFIED (command exited non-zero; check the real state) " : "";
-	return `${when(ev.ts)} ${status}${ev.summary}${ev.by && ev.by !== "main" ? ` (by ${ev.by})` : ""}${paired ? pairing(l, ev) : ""}`;
+	const what = ev.type ? `${ev.type} ${ev.target}${ev.link ? ` ${ev.link}` : ""}` : String(ev.summary ?? ""); // 没有 type 的是旧记录
+	return `${when(ev.ts)} ${what}${ev.by && ev.by !== "main" ? ` (by ${ev.by})` : ""}${paired ? pairing(l, ev) : ""}`;
 }
 
 const decisionLine = (d: Ev) => `- (${d.line}) ${String(d.date ?? d.ts.slice(0, 10))}: ${d.text}`;
@@ -150,7 +150,7 @@ export function snapshot(running: string[], l: Table = readTable(), monitoring: 
 	const writes = l.actions.filter(a => a.kind === "action");
 	const fresh = l.lastInput ? writes.filter(a => a.ts > (l.lastInput as string)).length : 0;
 	const shown = writes.slice(-Math.min(RECENT_WRITES, Math.max(5, fresh)));
-	if (shown.length) must.push("Remote writes recorded by the program (before redoing one, check its real state first):", ...shown.map(a => `- ${describeAction(l, a, false)}`));
+	if (shown.length) must.push("Outbound actions the program saw succeed (a receipt came back; before redoing one, check its real state first):", ...shown.map(a => `- ${describeAction(l, a, false)}`));
 	if (l.corrections.size) must.push("Open corrections:", ...[...l.corrections.values()].map(k => `- ${correctionLine(l, k)}`));
 	if (running.length) must.push(`Agents running (${running.length}): ${running.join("; ")}`);
 	// 故障用户在屏幕上看得到：新出现的让模型说一次，说过的不重复

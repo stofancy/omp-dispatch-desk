@@ -1,31 +1,15 @@
-// 识别远端写入，只用来记账（不拦）。尽力而为：认不出来的就不记。
-const GIT_PUSH = /(^|[|;&(\n]|&&)\s*(\w+=\S*\s+)*(env\s+|command\s+|sudo\s+)?(\S*\/)?git(\s+(-C\s+\S+|-c\s+\S+|--?[\w-]+(=\S+)?))*\s+push\b/;
-// lark-cli 的 --profile 可放在服务名前后，名字可能带空格。
-const LARK = String.raw`^[\s&]*(?:\w+=\S+\s+)*(?:(?:env|command|sudo)\s+)?(?:\S*/)?lark-cli\s+`;
-const LARK_PROFILE = String.raw`(?:--profile(?:=|\s+)(?:"[^"]*"|'[^']*'|\S+)\s+)?`;
-const LARK_IM_WRITE = String.raw`(?:\+(?:chat-(?:create|update)|messages-(?:send|reply|forward|edit)|flag-(?:create|cancel)|feed-shortcut-(?:create|remove))|(?:chats|chat\.(?:join_requests|managers|members|moderation|nickname|user_setting)|feed\.groups|files|images|messages|pins|reactions|threads)\s+(?:create|delete|update|patch|link|forward|merge_forward|urgent_(?:app|phone|sms)|add_managers|delete_managers|handle|batch_(?:update|add_item|remove_item)))(?=\s|$)`;
-// 在整条命令里找的：自带边界，或者出现在哪里都算
-const ANYWHERE: Array<[RegExp, string]> = [
-	[GIT_PUSH, "git push"],
-	[/\bgh\s+(pr|issue|release|repo)\s+(create|edit|comment|merge|close|reopen|review|ready|delete)\b/, "gh write"],
-	[/\b(chat\.(postMessage|update|delete|scheduleMessage)|reactions\.add|files\.(upload|completeUploadExternal))\b/, "slack write"],
-];
-// 靠参数判断的：只在同一条简单命令里找。一行里后面别的命令带 -f、-d（grep -F、cut -d）不算
-const SAME_COMMAND: Array<[RegExp, string]> = [
-	[new RegExp(`${LARK}${LARK_PROFILE}im\\s+${LARK_PROFILE}${LARK_IM_WRITE}`), "lark-cli im write"],
-	[new RegExp(`${LARK}${LARK_PROFILE}api\\s+${LARK_PROFILE}(POST|PUT|PATCH|DELETE)\\b`, "i"), "lark-cli api write"],
-	[/\bgh\s+api\b.*(\s-X\s*|--method[\s=])(POST|PATCH|PUT|DELETE)\b/i, "gh api write"],
-	[/\bgh\s+api\b(?!.*(\s-X\s*|--method[\s=])GET\b).*\s(-f|-F|--field|--raw-field|--input)\s/, "gh api write"],
-	[/\baz\s+(?!account\b)(?!.*\s(list|show)(\s|$)).*\s(create|update|delete|set|assign|add|remove|start|stop|restart|upload|import)(\s|$)/, "az write"],
-	[/\bcurl\b.*(\s-X\s*|--request[\s=])(POST|PUT|PATCH|DELETE)\b/i, "curl write"],
-	[/\bcurl\b(?!.*(\s-X\s*|--request[\s=])GET\b).*\s(-d|--data[\w-]*|-F|--form|-T|--upload-file)[\s=]/, "curl write"],
-];
+// 对外动作记账：只看工具结果里对方回的成功回执，不看命令文本说了什么。拿不准的不记。
+// 命令文本只用来分类（是推送、是哪个 Slack 方法），没有回执就不记；失败、被拒、本地路径都不记。
+export interface Action {
+	type: string; // slack.postMessage、git push、pr create、gh api、mcp …
+	target: string; // 频道、仓库+分支、PR……
+	link: string; // 回执里的链接；没有就空
+}
 
-// 把一行 shell 拆成简单命令：在引号、$( )、( ) 外面的 | ; && 换行处断开。
-// 不求完整：引号没配上时后面整段算一条命令，宁可多记不漏记。单个 & 不断开（2>&1、没加引号的 URL）
+// 把一行 shell 拆成简单命令：在引号、$( )、( ) 外面的 | ; && 换行处断开
 export function commands(cmd: string): string[] {
 	const out: string[] = [];
-	const open: string[] = []; // 还没闭合的 ' " (
+	const open: string[] = [];
 	let start = 0;
 	for (let i = 0; i < cmd.length; i++) {
 		const c = cmd[i];
@@ -55,25 +39,112 @@ export function commands(cmd: string): string[] {
 	return out;
 }
 
-// MCP 工具名形如 mcp__<server>_<operation>；先按操作名排除读操作，再认写操作
-const MCP_READ = /^(get|list|search|read|query|fetch|discover|executeread)|(^|_)(read|get|list|search)$/i;
-const MCP_WRITE = /(add|create|edit|update|delete|transition|merge|push|upsert|upload|link|write|destructive|send|post|reply)/i;
+const SLACK_METHOD = /\b(chat\.(?:postMessage|update|delete|scheduleMessage)|reactions\.(?:add|remove)|files\.(?:upload|completeUploadExternal))\b/;
+const GIT_PUSH = /^[\s&]*(?:\w+=\S*\s+)*(?:(?:env|command|sudo)\s+)?(?:\S*\/)?git(?:\s+(?:-C\s+\S+|-c\s+\S+|--?[\w-]+(?:=\S+)?))*\s+push\b(?!.*(?:--dry-run|\s-n\b))/;
+const GH_WRITE = /^[\s&]*(?:\w+=\S*\s+)*(?:\S*\/)?gh\s+(pr|issue|release)\s+(create|edit|comment|merge|close|reopen|review|ready)\b/;
+const GH_API = /^[\s&]*(?:\w+=\S*\s+)*(?:\S*\/)?gh\s+api\b.*(?:\s-X\s*(?:POST|PATCH|PUT|DELETE)\b|--method[\s=](?:POST|PATCH|PUT|DELETE)\b|\s(?:-f|-F|--field|--raw-field|--input)\s)/i;
+const GH_URL = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+(?:#(?:issuecomment|pullrequestreview|discussion_r)-?\d+)?/;
+const GH_COMMENT_URL = /"html_url"\s*:\s*"(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+#(?:issuecomment|pullrequestreview|discussion_r)-?\d+)"/;
 
-export function redact(s: string): string {
-	return s
-		.replace(/(xox[abpr]-|xapp-|ghp_|gho_|github_pat_)[\w-]+/g, "$1***")
-		.replace(/(Bearer\s+)\S+/gi, "$1***")
-		.replace(/((password|pwd|secret|token|sig)=)[^&\s'"]+/gi, "$1***");
+const noUserinfo = (u: string) => u.replace(/^(\w+:\/\/)[^/@\s]+@/, "$1");
+
+// 输出里顶层的 JSON 对象（每个 { 到配平的 }），解析得了的才算
+function jsonObjects(text: string): Array<Record<string, unknown>> {
+	const out: Array<Record<string, unknown>> = [];
+	for (let i = text.indexOf("{"); i >= 0 && out.length < 20; i = text.indexOf("{", i + 1)) {
+		let depth = 0;
+		let inStr = false;
+		for (let j = i; j < text.length; j++) {
+			const c = text[j];
+			if (inStr) {
+				if (c === "\\") j++;
+				else if (c === '"') inStr = false;
+			} else if (c === '"') inStr = true;
+			else if (c === "{") depth++;
+			else if (c === "}" && --depth === 0) {
+				try {
+					const v = JSON.parse(text.slice(i, j + 1));
+					if (v && typeof v === "object") out.push(v);
+					i = j;
+				} catch {}
+				break;
+			}
+		}
+	}
+	return out;
 }
 
-export function remoteWrite(toolName: string, input: Record<string, unknown> | undefined): string | undefined {
+function slackReceipt(cmd: string, out: string): Action | undefined {
+	const method = SLACK_METHOD.exec(cmd)?.[1];
+	if (!method) return undefined;
+	const ok = jsonObjects(out).find(o => o.ok === true && !o.error);
+	if (!ok) return undefined;
+	const channel = typeof ok.channel === "string" ? ok.channel : String(ok.channel && (ok.channel as { id?: string }).id ? (ok.channel as { id: string }).id : "");
+	const ts = typeof ok.ts === "string" ? ok.ts : typeof ok.message_ts === "string" ? ok.message_ts : "";
+	const permalink = /https:\/\/[\w.-]+\.slack\.com\/archives\/\w+\/p\d+\S*/.exec(out)?.[0] ?? "";
+	return { type: `slack.${method.split(".")[1]}`, target: channel, link: permalink || (channel && ts ? `slack:${channel}/${ts}` : "") };
+}
+
+const REMOTE_URL = /^(?:https?|ssh|git):\/\/|^[\w.-]+@[\w.-]+:/;
+
+function pushReceipt(out: string): Action | undefined {
+	const to = /^To\s+(\S+)\s*$/m.exec(out)?.[1];
+	if (!to || !REMOTE_URL.test(to)) return undefined; // 推到本地路径不算对外动作
+	if (/^\s*!\s.*\[(?:remote )?rejected\]|^\s*!\s/m.test(out) || /\berror: failed to push\b/.test(out)) return undefined;
+	const ok = /^\s*(?:[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}|\*\s+\[new (?:branch|tag)\]|\+\s+[0-9a-f]{7,}\.{3}[0-9a-f]{7,}|-\s+\[deleted\]).*?(?:->|\s)(\S+)\s*$/m.exec(out);
+	if (!ok) return undefined;
+	const ref = (/->\s*(\S+)\s*$/m.exec(ok[0]) ?? [])[1] ?? ok[1];
+	const url = noUserinfo(to).replace(/\.git$/, "");
+	return { type: "git push", target: `${url} ${ref}`, link: url };
+}
+
+function ghReceipt(simple: string, out: string): Action | undefined {
+	const w = GH_WRITE.exec(simple);
+	if (w) {
+		const url = GH_URL.exec(out)?.[0];
+		const done = /✓\s+(?:Merged|Closed|Reopened|Approved|Requested changes|Added a comment|Created|Edited)\b[^\n]*#(\d+)/.exec(out);
+		if (url) return { type: `${w[1]} ${w[2]}`, target: url.replace(/#.*/, ""), link: url };
+		if (done) return { type: `${w[1]} ${w[2]}`, target: `#${done[1]}`, link: "" };
+		return undefined;
+	}
+	if (GH_API.test(simple)) {
+		const url = GH_COMMENT_URL.exec(out)?.[1];
+		if (url) return { type: "gh api", target: url.replace(/#.*/, ""), link: url };
+	}
+	return undefined;
+}
+
+// 一次 bash 调用：命令只用来分类，成立与否看输出里的回执
+export function receiptOf(toolName: string, input: Record<string, unknown> | undefined, resultText: string, isError: boolean): Action | undefined {
 	if (toolName === "bash") {
 		const cmd = String(input?.command ?? "");
-		const label = ANYWHERE.find(([re]) => re.test(cmd))?.[1] ?? SAME_COMMAND.find(([re]) => commands(cmd).some(c => re.test(c)))?.[1];
-		return label ? `${label}: ${redact(cmd).replace(/\s+/g, " ").slice(0, 160)}` : undefined;
+		const simples = commands(cmd);
+		if (simples.some(c => GIT_PUSH.test(c))) {
+			const a = pushReceipt(resultText);
+			if (a) return a;
+		}
+		for (const c of simples) {
+			const a = ghReceipt(c, resultText);
+			if (a) return a;
+		}
+		return slackReceipt(cmd, resultText);
 	}
 	const path = String(input?.path ?? "");
 	const mcp = toolName === "write" && path.startsWith("xd://mcp__") ? path.slice(5) : toolName.startsWith("mcp__") ? toolName : undefined;
 	const op = mcp?.replace(/^mcp__[a-z0-9-]+?_/i, "");
-	return mcp && op && !MCP_READ.test(op) && MCP_WRITE.test(op) ? `mcp ${mcp}` : undefined;
+	if (!mcp || !op || isError || MCP_READ.test(op) || !MCP_WRITE.test(op)) return undefined;
+	return { type: "mcp", target: mcp, link: "" };
+}
+
+// 要不要在调用开始时先留着参数：只是省得对每个调用都存，不做判断
+export const worthKeeping = (toolName: string, input: Record<string, unknown> | undefined): boolean =>
+	toolName === "bash" ? /slack|push|\bgh\b/.test(String(input?.command ?? "")) : toolName.startsWith("mcp__") || String(input?.path ?? "").startsWith("xd://mcp__");
+
+// MCP 工具名形如 mcp__<server>_<operation>；按操作名排除读操作，再认写操作
+const MCP_READ = /^(get|list|search|read|query|fetch|discover|executeread)|(^|_)(read|get|list|search)$/i;
+const MCP_WRITE = /(add|create|edit|update|delete|transition|merge|push|upsert|upload|link|write|destructive|send|post|reply)/i;
+
+export function resultText(result: unknown): string {
+	const c = (result as { content?: unknown } | undefined)?.content;
+	return Array.isArray(c) ? c.map(x => String((x as { text?: unknown })?.text ?? "")).join("") : "";
 }

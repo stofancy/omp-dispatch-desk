@@ -1,46 +1,56 @@
 import { expect, test } from "bun:test";
-import { commands, remoteWrite } from "./remote";
+import { commands, receiptOf, resultText } from "./remote";
 
-const bash = (command: string) => remoteWrite("bash", { command });
+const SLACK_OK = '{"ok":true,"channel":"C0A82JJNUE5","ts":"1795144711.356319"}';
+const run = (command: string, out: string, isError = false) => receiptOf("bash", { command }, out, isError);
 
-test("只读的 gh api / curl，同一行后面别的命令带 -f、-F、-d 不算远端写入", () => {
-	expect(bash(`gh api repos/o/r/pulls/32/reviews -q '.[] | select(.id==1) | .body' > /tmp/rv.txt; for q in "a" "b"; do grep -c -F "$q" /tmp/rv.txt; done`)).toBeUndefined();
-	expect(bash("gh api repos/o/r/pulls/32/comments && tail -f log.txt")).toBeUndefined();
-	expect(bash("curl -s https://example.com/status | jq -r .state; rm -f /tmp/x; cut -d , -f 1 a.csv")).toBeUndefined();
+test("grep、cat、写文件这类只提到方法名的命令不记", () => {
+	expect(run("grep -n 'chat.postMessage' s.jsonl | head", "12: chat.postMessage")).toBeUndefined();
+	expect(run("cat notes.md", "use slack-api.sh chat.postMessage")).toBeUndefined();
+	expect(run("git worktree add -b f ../x main && python3 - <<'EOF'\nprint('chat.postMessage')\nEOF", "Preparing worktree\n")).toBeUndefined();
+	expect(run("sed -i 's/a/b/' /tmp/t.txt", "")).toBeUndefined();
 });
 
-test("写入照样认得出：带方法的、带字段的、带数据的；引号里和 $( ) 里的 | ; & 不打断", () => {
-	expect(bash("gh api -X POST repos/o/r/issues/1/comments -f body=hi")).toStartWith("gh api write");
-	expect(bash("cd /tmp && gh api repos/o/r/pulls/3/reviews -f event=COMMENT -f body=ok")).toStartWith("gh api write");
-	expect(bash('gh api -H "X: $(echo a | tr a b)" repos/o/r/issues/1/comments -f body=hi')).toStartWith("gh api write");
-	expect(bash('curl -s "https://example.com/api?a=1&b=2" -d \'{"x":1}\'')).toStartWith("curl write");
-	expect(bash('curl "https://example.com/api?a=1;b=2" -d x=1')).toStartWith("curl write");
-	expect(bash(`curl -s -H "Authorization: Bearer $(cat tok.json | jq -r .t)" -d '{"a":1}' https://example.com/api`)).toStartWith("curl write");
-	expect(bash("curl -s --request DELETE https://example.com/api/item/1")).toStartWith("curl write");
-	expect(bash("az group show -n a; az group delete -n a")).toStartWith("az write");
-	expect(bash("cd repo && git push origin feature")).toStartWith("git push");
+test("Slack：回执 ok:true 才记；ok:false、没有回执不记", () => {
+	const a = run("$S --user chat.postMessage channel=C0A82JJNUE5 text=hi", SLACK_OK);
+	expect(a).toEqual({ type: "slack.postMessage", target: "C0A82JJNUE5", link: "slack:C0A82JJNUE5/1795144711.356319" });
+	expect(run("serko-slack-api chat.postMessage --json '{}'", '{"ok":false,"error":"msg_too_long"}')).toBeUndefined();
+	expect(run("slack-api.sh chat.postMessage channel=C1 text=x", "")).toBeUndefined();
+	expect(run("slack-api.sh chat.postMessage channel=C1 text=x >/dev/null", "")).toBeUndefined();
+	expect(run("slack-api.sh reactions.add name=x", '{"ok":true}')?.type).toBe("slack.add");
+	expect(run("slack-api.sh chat.delete channel=C1 ts=1.2", '{"ok":true,"channel":"C1","ts":"1.2"}')?.type).toBe("slack.delete");
+	expect(run("slack-api.sh conversations.history channel=C1", SLACK_OK)).toBeUndefined();
 });
 
-test("lark-cli：识别飞书 IM 写入和原始 API 写入", () => {
-	for (const verb of ["+messages-send", "+messages-reply", "+messages-forward", "+messages-edit", "+chat-create", "+flag-cancel", "messages forward", "chat.members delete", "feed.groups batch_add_item"]) {
-		expect(bash(`echo ready && lark-cli --profile "示例 公司" im ${verb} --as bot`)).toStartWith("lark-cli im write");
-	}
-	for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-		expect(bash(`env /usr/local/bin/lark-cli api --profile=example ${method} /open-apis/im/v1/messages`)).toStartWith("lark-cli api write");
-	}
+test("git push：远端回执才记；被拒、dry-run、本地路径、静默、fetch 都不记", () => {
+	const ok = "To https://github.com/o/r.git\n   1a2b3c4..5d6e7f8  fix -> fix\n";
+	expect(run("git push origin fix", ok)).toEqual({ type: "git push", target: "https://github.com/o/r fix", link: "https://github.com/o/r" });
+	expect(run("git push -u origin new", "To git@github.com:o/r.git\n * [new branch]      new -> new\n")?.type).toBe("git push");
+	expect(run("git push origin main", "To https://dev.azure.com/s/p/_git/r\n ! [remote rejected] main -> main (denied)\nerror: failed to push some refs\n")).toBeUndefined();
+	expect(run("git push --dry-run origin fix", ok)).toBeUndefined();
+	expect(run("git push o HEAD:refs/heads/t", "To ../r.git\n * [new branch]      HEAD -> t\n")).toBeUndefined();
+	expect(run("git push -q origin fix", "")).toBeUndefined();
+	expect(run("git fetch origin", "From github.com:o/r\n   5497b75..4a4da17  main       -> origin/main\n")).toBeUndefined();
 });
 
-test("lark-cli：读消息、读已读状态和 GET 不记账", () => {
-	for (const command of [
-		`lark-cli --profile "示例 公司" im +messages-mget --message-ids om_example`,
-		"lark-cli im +chat-list --as user --types group",
-		"lark-cli im +messages-read-status",
-		"lark-cli im messages read_users",
-		"lark-cli im feed.groups batch_query",
-		`lark-cli im +messages-search --query '+messages-send'`,
-		`lark-cli api GET /open-apis/im/v1/chats | grep POST`,
-		`echo "lark-cli im +messages-send"`,
-	]) expect(bash(command)).toBeUndefined();
+test("gh：建 PR、评论有地址才记；只读的 gh pr view 不记", () => {
+	expect(run("gh pr create --fill", "https://github.com/o/r/pull/7\n")).toEqual({ type: "pr create", target: "https://github.com/o/r/pull/7", link: "https://github.com/o/r/pull/7" });
+	expect(run("gh pr comment 7 -b hi", "https://github.com/o/r/pull/7#issuecomment-123\n")?.link).toBe("https://github.com/o/r/pull/7#issuecomment-123");
+	expect(run("gh pr create --fill", "GraphQL: a pull request already exists")).toBeUndefined();
+	expect(run("gh pr view 7", "title: x\nhttps://github.com/o/r/pull/7")).toBeUndefined();
+	expect(run("gh api -X POST repos/o/r/issues/1/comments -f body=hi", '{"html_url":"https://github.com/o/r/issues/1#issuecomment-9","id":9}')?.type).toBe("gh api");
+	expect(run("gh api repos/o/r/pulls/1", '{"html_url":"https://github.com/o/r/pull/1"}')).toBeUndefined();
+});
+
+test("MCP 写操作没报错才记；读操作不记", () => {
+	expect(receiptOf("mcp__github_add_issue_comment", {}, "ok", false)?.type).toBe("mcp");
+	expect(receiptOf("mcp__github_add_issue_comment", {}, "x", true)).toBeUndefined();
+	expect(receiptOf("mcp__github_get_me", {}, "ok", false)).toBeUndefined();
+});
+
+test("resultText 取工具结果里的文本", () => {
+	expect(resultText({ content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] })).toBe("ab");
+	expect(resultText(undefined)).toBe("");
 });
 
 test("拆简单命令：引号、$( )、( ) 里面的分隔符不算；引号没配上时后面整段算一条", () => {

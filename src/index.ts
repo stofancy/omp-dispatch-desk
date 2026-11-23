@@ -19,7 +19,7 @@ import { holdHandback, releaseHandback } from "./agents";
 import { claimOperator, type Lark, type OperatorMessage, operatorPrompt, projectProfile, pushFeishuAsk, replyFeishu, rememberOwnerChat, runLark } from "./feishu";
 import { handbackKind } from "./heads";
 import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, TRIAGE_LOG, USER_RULES } from "./paths";
-import { remoteWrite } from "./remote";
+import { receiptOf, resultText, worthKeeping } from "./remote";
 import { checkReply, feedback, renderRules, settings } from "./rules";
 import { createScreen, messageRow, readReviewing } from "./screen";
 import { hasFeishu, readConfig, runSetup } from "./setup";
@@ -102,7 +102,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	let ui: Ctx | undefined;
 	let inboxSinceInput = 0;
 	let urgentSinceInput = 0;
-	const pending = new Map<string, { summary: string; bash: boolean }>(); // toolCallId → 远端写入摘要
+	const pending = new Map<string, { toolName: string; args: Input | undefined }>(); // toolCallId → 调用参数，结果回来时按回执判断
 	let replyNote: string | undefined; // 上一次回复的检查结果，下一次请求提醒模型
 	let awayNote: string | undefined; // 用户离开一段时间后回来：这期间的变化
 	let awayDelivered = false; // 离开提示已随用户那条消息交付，那一轮答完就清掉
@@ -590,18 +590,17 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const to = e.toolName === "write" ? /^agent:\/\/([^/?#]+)/.exec(String(e.args?.path ?? ""))?.[1] : undefined;
 			if (to && to !== "all" && to !== "Main") screen.handedTo(to);
 		}
-		const summary = remoteWrite(e.toolName, e.args);
-		if (summary && e.toolCallId) pending.set(e.toolCallId, { summary, bash: e.toolName === "bash" });
+		if (e.toolCallId && worthKeeping(e.toolName, e.args)) pending.set(e.toolCallId, { toolName: e.toolName, args: e.args });
 	});
-	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean }, ctx: Ctx) => {
-		const write = e.toolCallId ? pending.get(e.toolCallId) : undefined;
+	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean; result?: unknown }, ctx: Ctx) => {
+		const call = e.toolCallId ? pending.get(e.toolCallId) : undefined;
 		const s = sessionOf(ctx);
-		if (!write || !s || !e.toolCallId) return;
+		if (!call || !s || !e.toolCallId) return;
 		pending.delete(e.toolCallId);
+		const action = receiptOf(call.toolName, call.args, resultText(e.result), !!e.isError);
+		if (!action) return; // 没有对方回的成功回执就不记
 		const by = isMain(ctx) ? "main" : (ctx.agent?.id ?? "subagent");
-		// bash 的退出码是整串命令最后一条的：写入后面常跟着查看、diff 之类的核对，它们非零不等于写入失败，只能记「没把握」
-		const result = !e.isError ? { ok: true } : write.bash ? { unsure: true } : { ok: false };
-		record({ sid: s, kind: "action", line: by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name, summary: write.summary, ...result, by });
+		record({ sid: s, kind: "action", line: by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name, ...action, by });
 	});
 
 	// ---------- 任务表工具（调度器模式关着时报错） ----------

@@ -77,19 +77,21 @@ function jsonObjects(text: string): Array<Record<string, unknown>> {
 function slackReceipt(cmd: string, out: string): Action | undefined {
 	const method = SLACK_METHOD.exec(cmd)?.[1];
 	if (!method) return undefined;
-	const ok = jsonObjects(out).find(o => o.ok === true && !o.error);
-	if (!ok) return undefined;
+	const replies = jsonObjects(out).filter(o => typeof o.ok === "boolean");
+	if (!replies.length || replies.some(o => o.ok === false || o.error) || replies.at(-1)?.ok !== true) return undefined; // 多步里任何一步失败都不算成功
+	const ok = replies.findLast(o => typeof o.ts === "string") ?? replies.at(-1) ?? {};
 	const channel = typeof ok.channel === "string" ? ok.channel : String(ok.channel && (ok.channel as { id?: string }).id ? (ok.channel as { id: string }).id : "");
 	const ts = typeof ok.ts === "string" ? ok.ts : typeof ok.message_ts === "string" ? ok.message_ts : "";
 	const permalink = /https:\/\/[\w.-]+\.slack\.com\/archives\/\w+\/p\d+\S*/.exec(out)?.[0] ?? "";
 	return { type: `slack.${method.split(".")[1]}`, target: channel, link: permalink || (channel && ts ? `slack:${channel}/${ts}` : "") };
 }
 
-const REMOTE_URL = /^(?:https?|ssh|git):\/\/|^[\w.-]+@[\w.-]+:/;
+// 本地路径正向识别：/、./、../、file://、~ 开头；其余（host:path、ssh://、https://）都当远端
+const LOCAL_PATH = /^(?:\/|\.\.?\/|file:\/\/|~)/;
 
 function pushReceipt(out: string): Action | undefined {
 	const to = /^To\s+(\S+)\s*$/m.exec(out)?.[1];
-	if (!to || !REMOTE_URL.test(to)) return undefined; // 推到本地路径不算对外动作
+	if (!to || LOCAL_PATH.test(to)) return undefined; // 推到本地路径不算对外动作
 	if (/^\s*!\s.*\[(?:remote )?rejected\]|^\s*!\s/m.test(out) || /\berror: failed to push\b/.test(out)) return undefined;
 	const ok = /^\s*(?:[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}|\*\s+\[new (?:branch|tag)\]|\+\s+[0-9a-f]{7,}\.{3}[0-9a-f]{7,}|-\s+\[deleted\]).*?(?:->|\s)(\S+)\s*$/m.exec(out);
 	if (!ok) return undefined;

@@ -33,6 +33,20 @@ test("git push：远端回执才记；被拒、dry-run、本地路径、静默�
 	expect(run("git fetch origin", "From github.com:o/r\n   5497b75..4a4da17  main       -> origin/main\n")).toBeUndefined();
 });
 
+test("git push：SSH 写法（host:path、别名主机）算远端；本地路径正向识别", () => {
+	expect(run("git push origin x", "To github.com:o/sol-tokenization-service.git\n   a1b2c3d..bd58e48  x -> x\n")?.type).toBe("git push");
+	expect(run("git push origin x", "To github-personal:o/r.git\n * [new branch]      x -> x\n")?.type).toBe("git push");
+	expect(run("git push o x", "To /tmp/r.git\n * [new branch]      x -> x\n")).toBeUndefined();
+	expect(run("git push o x", "To file:///tmp/r.git\n * [new branch]      x -> x\n")).toBeUndefined();
+});
+
+test("Slack 多步上传：任何一步 ok:false 或最后不是 ok 就不记", () => {
+	const c = "S=slack-api.sh; $S files.getUploadURLExternal; $S files.completeUploadExternal";
+	expect(run(c, '{"ok":true,"upload_url":"u"}\n{"ok":false,"error":"invalid_arguments"}')).toBeUndefined();
+	expect(run(c, '{"ok":false,"error":"x"}\n{"ok":true,"files":[]}')).toBeUndefined();
+	expect(run(c, '{"ok":true,"upload_url":"u"}\n{"ok":true,"files":[{"id":"F1"}]}')?.type).toBe("slack.completeUploadExternal");
+});
+
 test("gh：建 PR、评论有地址才记；只读的 gh pr view 不记", () => {
 	expect(run("gh pr create --fill", "https://github.com/o/r/pull/7\n")).toEqual({ type: "pr create", target: "https://github.com/o/r/pull/7", link: "https://github.com/o/r/pull/7" });
 	expect(run("gh pr comment 7 -b hi", "https://github.com/o/r/pull/7#issuecomment-123\n")?.link).toBe("https://github.com/o/r/pull/7#issuecomment-123");

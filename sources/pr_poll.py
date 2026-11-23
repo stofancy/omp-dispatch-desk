@@ -17,11 +17,38 @@ ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"  # Azure DevOps 的 AAD �
 VOTES = {10: "approved", 5: "approved with suggestions", 0: "no vote", -5: "waiting for author", -10: "rejected"}
 
 
+TRANSIENT = ("EOF", "TLS handshake timeout", "error connecting", "Connection reset", "Connection aborted", "IncompleteRead", "RemoteDisconnected", "Certificate verification failed")
+RETRY_WAIT = [3, 8]  # 本机网络间歇性把 HTTPS 响应截断（EOF / 握手超时 / 连接重置）：只对这类错误重试
+
+
+def reason(stderr):
+    """从 stderr 里挑出真正的原因。az 把 `ERROR: AADSTS…` 放在最前面，只取末尾会把它截掉，剩下一串没用的关联 ID 和登录命令。"""
+    lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+    for ln in lines:
+        if ln.startswith("ERROR"):
+            return ln[:300]
+    for ln in reversed(lines):  # az 抛 Python 异常时，原因在最后一行含 Error/Exception 的那行
+        if "Error" in ln or "Exception" in ln:
+            return ln[:300]
+    return stderr.strip()[-300:]
+
+
 def run_json(args):
-    p = subprocess.run(args, capture_output=True, text=True, timeout=90)
-    if p.returncode:
-        raise RuntimeError(f"{args[0]} {args[1]} exit {p.returncode}: {p.stderr.strip()[-300:]}")
-    return json.loads(p.stdout or "null")
+    attempt = 0
+    while True:
+        last = attempt == len(RETRY_WAIT)
+        try:
+            p = subprocess.run(args, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            if last:
+                raise
+        else:
+            if not p.returncode:
+                return json.loads(p.stdout or "null")
+            if last or not any(t in p.stderr for t in TRANSIENT):
+                raise RuntimeError(f"{args[0]} {args[1]} exit {p.returncode}: {reason(p.stderr)}")  # 认证过期、404 之类不是抖动，立刻照原样报
+        time.sleep(RETRY_WAIT[attempt])
+        attempt += 1
 
 
 def iso_now():

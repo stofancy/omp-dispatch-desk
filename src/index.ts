@@ -19,7 +19,7 @@ import { holdHandback, releaseHandback } from "./agents";
 import { claimOperator, type Lark, type OperatorMessage, operatorPrompt, projectProfile, pushFeishuAsk, replyFeishu, rememberOwnerChat, runLark } from "./feishu";
 import { handbackKind } from "./heads";
 import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, TRIAGE_LOG, USER_RULES } from "./paths";
-import { receiptOf, resultText, worthKeeping } from "./remote";
+import { receiptsOf, resultText, worthKeeping } from "./remote";
 import { checkReply, feedback, renderRules, settings } from "./rules";
 import { createScreen, messageRow, readReviewing } from "./screen";
 import { hasFeishu, readConfig, runSetup } from "./setup";
@@ -597,10 +597,11 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		const s = sessionOf(ctx);
 		if (!call || !s || !e.toolCallId) return;
 		pending.delete(e.toolCallId);
-		const action = receiptOf(call.toolName, call.args, resultText(e.result), !!e.isError);
-		if (!action) return; // 没有对方回的成功回执就不记
+		const actions = receiptsOf(call.toolName, call.args, resultText(e.result), !!e.isError);
+		if (!actions.length) return; // 没有对方回的成功回执就不记
 		const by = isMain(ctx) ? "main" : (ctx.agent?.id ?? "subagent");
-		record({ sid: s, kind: "action", line: by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name, ...action, by });
+		const line = by === "main" ? undefined : taskOfAgent(readTable(), by.split(".")[0])?.name;
+		for (const action of actions) record({ sid: s, kind: "action", line, ...action, by });
 	});
 
 	// ---------- 任务表工具（调度器模式关着时报错） ----------

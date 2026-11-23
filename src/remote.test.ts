@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { commands, receiptOf, resultText } from "./remote";
+import { commands, receiptOf, receiptsOf, resultText } from "./remote";
 
 const SLACK_OK = '{"ok":true,"channel":"C0A82JJNUE5","ts":"1795144711.356319"}';
-const run = (command: string, out: string, isError = false) => receiptOf("bash", { command }, out, isError);
+const run = (command: string, out: string, isError = false) => receiptsOf("bash", { command }, out, isError)[0];
 
 test("grep、cat、写文件这类只提到方法名的命令不记", () => {
 	expect(run("grep -n 'chat.postMessage' s.jsonl | head", "12: chat.postMessage")).toBeUndefined();
@@ -53,6 +53,14 @@ test("git push：只看输出——前缀 timeout/带空格环境变量也记；
 	expect(run('git -c "a=$(echo b)" push origin x', ok)?.type).toBe("git push");
 	expect(run("git push --dry-run origin x", ok)).toBeUndefined();
 	expect(run("git fetch", "From github.com:o/r\n   1a2b3c4..5d6e7f8  x -> origin/x\n")).toBeUndefined();
+});
+
+test("git push：同一命令后面的 grep -n 不算 dry-run；一次推多个目标各记一条", () => {
+	const ok = "To github.com:o/r.git\n   1a2b3c4..5d6e7f8  x -> x\n";
+	expect(receiptsOf("bash", { command: "git push origin HEAD; grep -n foo f" }, ok, false)).toHaveLength(1);
+	expect(receiptsOf("bash", { command: "git push --dry-run o x; echo" }, ok, false)).toHaveLength(0);
+	const two = ok + "To github.com:o/r2.git\n * [new branch]      y -> y\n";
+	expect(receiptsOf("bash", { command: "git push a x && git push b y" }, two, false).map(a => a.target)).toEqual(["github.com:o/r x", "github.com:o/r2 y"]);
 });
 
 test("gh：建 PR、评论有地址才记；只读的 gh pr view 不记", () => {

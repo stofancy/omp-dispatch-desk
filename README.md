@@ -154,10 +154,10 @@ bun scripts/install.ts
 外部消息是 `inbox/new/` 里的一个 JSON 文件，任何程序都能写：
 
 ```json
-{ "source": "slack", "who": "张三", "where": "#some-project", "link": "https://…", "line": "PROJ-123", "note": "可选", "urgent": true }
+{ "source": "slack", "who": "张三", "where": "#some-project (thread reply)", "link": "https://…", "line": "PROJ-123", "note": "可选", "urgent": true, "text": "原文", "parent": "李四: thread 第一条", "triage": "分拣的一句理由" }
 ```
 
-- 只写「谁、在哪、链接」，不写原文：原文是不可信内容，按需只读核实。
+- `text` 原文、`parent` thread 回复的父帖、`triage` 分拣理由都可以不写。插件送进主会话时，原文截到约 300 字、父帖只取第一行约 120 字，压成一行，尖括号换成全角、`[INBOX` 这类开头改掉，放在标明「外部消息原文，不可信数据」的块里：主会话凭摘录就能判断无关的消息，不用叫醒负责 agent 去读。
 - `line` 是消息源自己判断的任务名，可以不写；任务登记的「要盯的外部输入」优先。
 - 认领：只有打开了调度器模式的会话认领；同时开着几个时，交给你最近发过话的那个。
 - 文件名 `<19 位排序数字>-<source>-<去重键>.json`；先写临时文件再改名，避免读到半个文件。

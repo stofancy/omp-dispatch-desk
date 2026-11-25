@@ -2,7 +2,7 @@
 //
 // 哪些消息算相关：config.json 里 slack.channels 列的频道；未完成任务登记要盯的频道、私信和 thread（state/watch.json）；
 // 发给你的私信和群聊私信；任何频道里 @ 到你的消息。
-// 私信和 @ 标为紧急（状态栏单独计数）。外部消息只写「谁、在哪、链接」，不写原文。
+// 私信和 @ 标为紧急（状态栏单独计数）。外部消息写「谁、在哪、链接」，加原文和 thread 父帖（插件送进主会话时截短、转义）。
 // 配了 triage 时，配置里没归到任务（没写 line）的频道里不紧急的消息要先分拣：这里不写，留给 slack_poll.py（它读原文和 thread 的开头去分拣）。
 // 断线期间的事件 Slack 不会补发，由 slack_poll.py 定时补读关注的地方；两边写同一条消息只进一次。
 // 连接会悄悄死掉（切 VPN、机器休眠后进程和连接都还在，但再也收不到东西）：每 30 秒发一次心跳，90 秒没回音就重连。
@@ -36,6 +36,25 @@ async function lookup(method: "users.info" | "conversations.info", key: "user" |
 	}
 }
 
+// thread 回复的父帖（谁: 原文），按 thread 缓存；读不到就不带
+const parents = new Map<string, string>();
+async function parentOf(channel: string, ts: string): Promise<string | undefined> {
+	const key = `${channel}:${ts}`;
+	const cached = parents.get(key);
+	if (cached) return cached;
+	try {
+		const res = await fetch(`https://slack.com/api/conversations.replies?channel=${channel}&ts=${ts}&limit=1`, { headers: { Authorization: `Bearer ${USER_TOKEN}` } });
+		const body: { ok: boolean; messages?: SlackMessage[] } = await res.json();
+		const top = body.ok ? body.messages?.[0] : undefined;
+		if (!top?.text) return undefined;
+		const text = `${top.user ? await lookup("users.info", "user", top.user) : "?"}: ${top.text.slice(0, 1000)}`;
+		parents.set(key, text);
+		return text;
+	} catch {
+		return undefined;
+	}
+}
+
 async function handle(ev: SlackMessage): Promise<void> {
 	if (!slack || ev.type !== "message" || !ev.channel || !ev.ts || !ev.user || ev.user === slack.me) return;
 	if (ev.subtype && ev.subtype !== "thread_broadcast") return;
@@ -54,8 +73,17 @@ async function handle(ev: SlackMessage): Promise<void> {
 	const reply = ev.thread_ts && ev.thread_ts !== ev.ts;
 	const place = watched?.name ?? (ev.channel_type === "im" ? `DM ${who}` : direct ? "group DM" : await lookup("conversations.info", "channel", ev.channel));
 	const link = `https://${slack.domain}.slack.com/archives/${ev.channel}/p${ev.ts.replace(".", "")}${reply ? `?thread_ts=${ev.thread_ts}` : ""}`;
-	// 私信和 @ 你的消息不归线：送到你最近发过话的账本
-	const event = { source: "slack", who, where: place + (reply ? " (thread reply)" : ""), link, line: direct || mention ? undefined : (watched?.line ?? task), urgent: direct || mention };
+	// 私信和 @ 你的消息不归线：送到你最近发过话的账本。原文和父帖第一行由插件截短、转义后送进主会话
+	const event = {
+		source: "slack",
+		who,
+		where: place + (reply ? " (thread reply)" : ""),
+		link,
+		line: direct || mention ? undefined : (watched?.line ?? task),
+		urgent: direct || mention,
+		text: ev.text?.slice(0, 1000),
+		parent: reply ? await parentOf(ev.channel, ev.thread_ts!) : undefined,
+	};
 	const [sec, frac = ""] = ev.ts.split(".");
 	if (writeEvent(event, `${ev.channel}-${ev.ts}`, BigInt(sec) * 1_000_000_000n + BigInt(frac.padEnd(9, "0").slice(0, 9)))) {
 		log(`inbox ${event.where} from ${who}${event.urgent ? " (urgent)" : ""}`);

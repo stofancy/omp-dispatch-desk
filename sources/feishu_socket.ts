@@ -141,7 +141,7 @@ export async function handle(line: string, profile: string, identity: Identity, 
 	}
 	const place = ev.chat_type === "p2p" ? `机器人私聊 ${who}` : chatName || ev.chat_id;
 	const where = place + (ev.root_id && ev.root_id !== ev.message_id ? " (thread reply)" : "");
-	if (writeEvent({ source: "feishu", who, where, link, line: route.line, urgent: route.urgent }, ev.message_id, order)) {
+	if (writeEvent({ source: "feishu", who, where, link, line: route.line, urgent: route.urgent, text: ev.content?.slice(0, 1000) }, ev.message_id, order)) {
 		log(`写入收件箱 ${where}${route.urgent ? "（紧急）" : ""}`);
 	}
 }

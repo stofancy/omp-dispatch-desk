@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from inbox import CONFIG, TRIAGE, health, load_state, log_triage, read_secret, save_state, seen, triage, watch_plan, write_event
+from inbox import CONFIG, TRIAGE, health, load_state, log_triage, read_secret, save_state, seen, triage, triage_reason, watch_plan, write_event
 
 SLACK = CONFIG["slack"]
 ME = SLACK["me"]
@@ -151,12 +151,15 @@ def main():
         newest = cur
         meta = {"name": place_name(ch, users), "line": w["task"]}
         got = []
+        top = None
         try:
             for r in api("conversations.replies", channel=ch, ts=parent, oldest=cursors[key], limit=200).get("messages", []):
                 rts = float(r["ts"])
                 newest = max(newest, rts)
-                if r["ts"] != parent and rts > cur and r.get("user") != ME:
-                    got.append((ch, meta, r, parent, None))
+                if r["ts"] == parent:
+                    top = r  # Slack 每页都带着父帖：送的时候附上它的第一行
+                elif rts > cur and r.get("user") != ME:
+                    got.append((ch, meta, r, parent, top))
         except Exception as exc:
             failed.append(f"thread in {meta['name']}: {exc}")
             continue
@@ -186,22 +189,23 @@ def main():
         items = [{"who": e["who"], "where": e["where"], "text": readable(e["m"].get("text"), users)[:800],
                   **({"thread": f"{display_name(e['top'].get('user', '?'), users)}: {readable(e['top'].get('text'), users)[:300]}"} if e["top"] else {})} for e in sort]
         try:
-            for e, (category, task, summary) in zip(sort, triage(items, watch_plan().get("tasks", []))):
-                e.update(category=category, task=task, summary=summary)
+            for e, (category, task, summary, reason) in zip(sort, triage(items, watch_plan().get("tasks", []))):
+                e.update(category=category, task=task, summary=summary, reason=reason)
         except Exception as exc:
             failed.append(f"triage failed, sent everything: {exc}")
             for e in sort:
-                e.update(category="unsorted", task=None, summary="")
-        log_triage([{k: e[k] for k in ("category", "task", "who", "where", "link", "summary")} for e in sort])
+                e.update(category="unsorted", task=None, summary="", reason="")
+        log_triage([{k: e[k] for k in ("category", "task", "who", "where", "link", "summary", "reason")} for e in sort])
     # 分拣说归某个任务也只写进说明，不替主会话定归属：猜错了会反复叫醒那个任务的负责 agent
     written = 0
     for e in pending:
         if e.get("category") == "irrelevant":
             continue
-        note = {"task": f"triage: may belong to {e.get('task')}", "relevant": "triage: relevant to the operator or the team", "unsure": "triage: unsure",
-                "unsorted": "triage failed, not sorted"}.get(e.get("category"))
-        written += write_event("slack", e["who"], e["where"], e["link"], line=e["line"], note=note, urgent=e["urgent"],
-                               key=e["key"], order_ns=int(float(e["m"]["ts"]) * 1e9))
+        top = e["top"]
+        written += write_event("slack", e["who"], e["where"], e["link"], line=e["line"], urgent=e["urgent"], key=e["key"], order_ns=int(float(e["m"]["ts"]) * 1e9),
+                               note="triage failed, not sorted" if e.get("category") == "unsorted" else None, triage=triage_reason(e),
+                               text=readable(e["m"].get("text"), users),
+                               parent=top and f"{display_name(top.get('user', '?'), users)}: {readable(top.get('text'), users)}")
     # 不再登记的地方把游标丢掉：以后重新登记时从那一刻读起，不回放中间这段。配置里的频道一直留着
     live = set(channels) | {f"{w['channel']}:{w['thread']}" for w in plan if w.get("thread")}
     cursors = {k: v for k, v in cursors.items() if k in live}

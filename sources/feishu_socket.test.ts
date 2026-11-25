@@ -67,11 +67,11 @@ test("使用者在未登记的群里点名机器人，去掉机器人的占位�
 	expect(JSON.parse(readFileSync(operatorFile("om_owner_rendered"), "utf8")).text).toBe("看一下进展");
 });
 
-test("他人私聊机器人，只写入不带原文的外部消息", async () => {
+test("他人私聊机器人，写入带原文的外部消息（插件送时再截短转义）", async () => {
 	await consume("om_other_p2p", { sender_id: "ou_other" });
 	expect(JSON.parse(readFileSync(externalFile("om_other_p2p"), "utf8"))).toEqual({
 		source: "feishu", who: "甲", where: "机器人私聊 甲",
-		link: `https://applink.feishu.cn/client/chat/open?openChatId=${base.chat_id}`,
+		link: `https://applink.feishu.cn/client/chat/open?openChatId=${base.chat_id}`, text: "看一下进展",
 	});
 	expect(await Bun.file(operatorFile("om_other_p2p")).exists()).toBe(false);
 });

@@ -20,7 +20,7 @@ export function readSecret(s: Secret): string {
 	return (s.json_key ? JSON.parse(raw)[s.json_key] : raw).trim();
 }
 
-export interface InboxEvent { source: string; who: string; where: string; link: string; line?: string; note?: string; urgent?: boolean }
+export interface InboxEvent { source: string; who: string; where: string; link: string; line?: string; note?: string; urgent?: boolean; text?: string; parent?: string }
 
 interface OperatorEvent {
 	source: "feishu";

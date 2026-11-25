@@ -82,18 +82,18 @@ def github(state, watched, failed):
         where = f"{repo}#{n} {pr['title'][:60]}"
         hits = []
         for c in run_json(["gh", "api", f"repos/{repo}/issues/{n}/comments?since={since}&per_page=100"]):
-            hits.append((c["created_at"], c["user"]["login"], c["html_url"], "comment"))
+            hits.append((c["created_at"], c["user"]["login"], c["html_url"], "comment", c.get("body")))
         for c in run_json(["gh", "api", f"repos/{repo}/pulls/{n}/comments?since={since}&per_page=100"]):
-            hits.append((c["created_at"], c["user"]["login"], c["html_url"], "review comment"))
+            hits.append((c["created_at"], c["user"]["login"], c["html_url"], "review comment", c.get("body")))
         for r in run_json(["gh", "api", f"repos/{repo}/pulls/{n}/reviews?per_page=100"]):
-            hits.append((r.get("submitted_at") or "", r["user"]["login"], r["html_url"], f"review {r['state']}"))
+            hits.append((r.get("submitted_at") or "", r["user"]["login"], r["html_url"], f"review {r['state']}", r.get("body")))
         newest = since
-        for at, who, link, kind in sorted(hits):
+        for at, who, link, kind, body in sorted(hits, key=lambda h: h[0]):
             if at <= since:
                 continue
             newest = max(newest, at)
             if who != me:
-                write_event("github", who, where, link, line=line, note=kind)
+                write_event("github", who, where, link, line=line, note=kind, text=body)
         seen[url] = max(newest, pr["updatedAt"])
 
 
@@ -137,7 +137,7 @@ def ado(state, org, watched, failed):
                     continue
                 newest = max(newest, at)
                 if c.get("author", {}).get("id") != me:
-                    write_event("ado", c["author"].get("displayName", "?"), where, f"{link}?discussionId={t['id']}", line=line, note="comment")
+                    write_event("ado", c["author"].get("displayName", "?"), where, f"{link}?discussionId={t['id']}", line=line, note="comment", text=c.get("content"))
         seen[key] = {"since": newest, "votes": votes}
 
 

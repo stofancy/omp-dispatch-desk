@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from inbox import CONFIG, TRIAGE, health, load_state, log_triage, save_state, seen, triage, watch_plan, write_event
+from inbox import CONFIG, TRIAGE, health, load_state, log_triage, save_state, seen, triage, triage_reason, watch_plan, write_event
 
 LARK_ENV = {**os.environ, "LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "TZ": "UTC"}
 
@@ -187,10 +187,10 @@ def poll_account(account, plan, now, failed):
             results = triage(items, plan.get("tasks", []))
         except Exception as exc:
             failed.append(f"{profile}/分拣失败，全部送出：{exc}")
-            results = [("unsorted", None, "")] * len(sort)
-        for e, (category, task, summary) in zip(sort, results):
-            e.update(category=category, task=task, summary=summary)
-        log_triage([{k: e[k] for k in ("category", "task", "who", "where", "link", "summary")} for e in sort])
+            results = [("unsorted", None, "", "")] * len(sort)
+        for e, (category, task, summary, reason) in zip(sort, results):
+            e.update(category=category, task=task, summary=summary, reason=reason)
+        log_triage([{k: e[k] for k in ("category", "task", "who", "where", "link", "summary", "reason")} for e in sort])
 
     written = dropped = 0
     for e in pending.values():
@@ -202,10 +202,10 @@ def poll_account(account, plan, now, failed):
             dropped += 1
             continue
         # 分拣的猜测只写进说明，不替主会话定归属。
-        note = {"task": f"triage: may belong to {e.get('task')}", "relevant": "triage: relevant to the operator or the team",
-                "unsure": "triage: unsure", "unsorted": "triage failed, not sorted"}.get(category)
-        written += write_event("feishu", e["who"], e["where"], e["link"], line=e["line"], note=note, urgent=e["urgent"],
-                               key=e["key"], order_ns=e["time"] * 10**9)
+        top = roots.get(e["root"]) if e["root"] else None
+        written += write_event("feishu", e["who"], e["where"], e["link"], line=e["line"], urgent=e["urgent"], key=e["key"], order_ns=e["time"] * 10**9,
+                               note="triage failed, not sorted" if category == "unsorted" else None, triage=triage_reason(e),
+                               text=e["message"].get("content"), parent=top and top.get("content"))
     save_state(name, {"chats": cursors, "mentions": mention_start})
     if written or dropped:
         print(f"{time.strftime('%F %T')} {profile} 写入 {written} 条，分拣拦下 {dropped} 条")

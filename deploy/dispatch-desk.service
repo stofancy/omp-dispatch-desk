@@ -1,0 +1,13 @@
+# systemd 用户服务：插件唯一的常驻服务（看板、Slack/飞书实时推送、定时补读）。由 bun scripts/install.ts 渲染后装到 ~/.config/systemd/user/；
+# WSL 等无登录会话的环境还要 loginctl enable-linger。
+[Unit]
+Description=omp-dispatch-desk：常驻服务（看板、实时推送、定时补读）
+After=network-online.target
+
+[Service]
+ExecStart=<bun> <repo>/sources/service.ts
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

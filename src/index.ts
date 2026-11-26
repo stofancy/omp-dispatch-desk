@@ -17,14 +17,14 @@ import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { holdHandback, releaseHandback } from "./agents";
 import { claimOperator, type Lark, type OperatorMessage, operatorPrompt, projectProfile, pushFeishuAsk, replyFeishu, rememberOwnerChat, runLark } from "./feishu";
-import { handbackKind } from "./heads";
-import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, TRIAGE_LOG, USER_RULES } from "./paths";
+import { completedTurn, handbackKind, recorderOf } from "./heads";
+import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, SERVICE_STATE, TRIAGE_LOG, USER_RULES } from "./paths";
 import { receiptsOf, resultText, worthKeeping } from "./remote";
 import { checkReply, feedback, renderRules, settings } from "./rules";
 import { createScreen, messageRow, readReviewing } from "./screen";
 import { hasFeishu, readConfig, runSetup } from "./setup";
 import { OFF_MESSAGE, isOn, setOn } from "./switch";
-import { type Ev, GENERAL, type Table, agentTaken, append, doneBlocker, isReviewerName, logError, needsReview, openTasks, readTable, taskOfAgent, taskOfReviewer, today } from "./table";
+import { type Ev, GENERAL, STATES, type Table, agentTaken, append, doneBlocker, isReviewerName, logError, needsReview, openTasks, readTable, taskOfAgent, taskOfReviewer, today } from "./table";
 import { type Tier, due, tierOf } from "./tiers";
 import { type InboxFile, formatEvent } from "./excerpt";
 import { decidedFor, renderViews, since, snapshot, taskCard } from "./views";
@@ -55,7 +55,8 @@ interface Ctx {
 		rerenderMessage?(timestamp: number): void;
 	};
 }
-interface UpdateParams { task?: string; id: string; title?: string; status?: string; next?: string; chase?: string; pr?: string; source?: string }
+interface UpdateParams { task?: string; id: string; title?: string; state?: (typeof STATES)[number]; waiting_on?: string; status?: string; next?: string; chase?: string; pr?: string; source?: string }
+const NEXT_MAX = 120; // 下一步只写一步；历史和证据放 source
 interface AskParams { action: "open" | "close" | "decide"; task?: string; text?: string; checked?: string; n?: number; outcome?: string }
 interface ReviewParams { task: string; item?: string; verdict: "pass" | "fail"; evidence: string; findings?: string }
 interface TaskParams { task: string; agent?: string; title?: string; goal?: string; done_when?: string; watch_add?: string[]; watch_remove?: string[]; status?: string }
@@ -103,6 +104,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	let inboxSinceInput = 0;
 	let urgentSinceInput = 0;
 	const pending = new Map<string, { toolName: string; args: Input | undefined }>(); // toolCallId → 调用参数，结果回来时按回执判断
+	const recorded = new Set<string>(); // 这一轮调过任务表工具的子代理
 	let replyNote: string | undefined; // 上一次回复的检查结果，下一次请求提醒模型
 	let awayNote: string | undefined; // 用户离开一段时间后回来：这期间的变化
 	let awayDelivered = false; // 离开提示已随用户那条消息交付，那一轮答完就清掉
@@ -184,12 +186,23 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		return n;
 	};
 
+	// 常驻服务记下的看板端口；服务没装或文件坏了就不显示
+	const boardPort = (): number | undefined => {
+		try {
+			const port: unknown = JSON.parse(readFileSync(SERVICE_STATE, "utf8")).port;
+			return typeof port === "number" ? port : undefined;
+		} catch {
+			return undefined;
+		}
+	};
 	const status = (ctx: Ctx): string => {
 		const l = readTable();
 		const parts = [`📋 任务 ${openTasks(l).length}`, `待你决定 ${l.asks.size}`, `在跑的 agent ${jobs(ctx).length}`, `新消息 ${inboxSinceInput}`];
 		if (urgentSinceInput) parts.push(`其中私信/@你 ${urgentSinceInput}`); // 都是你上次发话以来到的，发话后清零
 		const quiet = droppedSince(l.lastInput);
 		if (quiet) parts.push(`拦下无关 ${quiet}`);
+		const port = boardPort();
+		if (port) parts.push(`看板 http://127.0.0.1:${port}/`);
 		return parts.join(" · ");
 	};
 	const showStatus = (ctx: Ctx) => ctx.ui.setStatus?.(STATUS_KEY, isOn(session) ? status(ctx) : undefined);
@@ -469,7 +482,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const owned = id && !id.includes(".") ? taskOfAgent(l, id) : undefined;
 			const reviewed = taskOfReviewer(l, id);
 			if (owned) {
-				text += `<dispatch-desk-owner-rules>\n${renderRules(PROMPTS.owner, settings())}</dispatch-desk-owner-rules>\n${taskCard(owned)}`;
+				text += `<dispatch-desk-owner-rules>\n${renderRules(PROMPTS.owner, settings())}</dispatch-desk-owner-rules>\n${taskCard(owned, l)}`;
 				// 主会话派出的审查者还在跑：这份结果先别往外发，免得审查不通过还得再去更正
 				const r = readReviewing(sessionOf(ctx))[owned.name];
 				if (r)
@@ -508,8 +521,9 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	});
 	pi.on("agent_start", async (_e: unknown, ctx: Ctx) => {
 		if (isMain(ctx) && on(ctx)) screen.turnStart();
+		if (!isMain(ctx)) recorded.delete(ctx.agent?.id ?? ""); // 负责 agent 新一轮：重新看它这轮记没记任务表
 	});
-	pi.on("agent_end", async (e: { messages?: Array<{ role?: string; content?: unknown }>; awaitingAsyncWork?: boolean }, ctx: Ctx) => {
+	pi.on("agent_end", async (e: { messages?: Array<{ role?: string; stopReason?: string; content?: unknown }>; awaitingAsyncWork?: boolean }, ctx: Ctx) => {
 		if (isMain(ctx)) {
 			if (on(ctx)) screen.turnEnd(ctx.ui);
 			userTurn = false;
@@ -529,8 +543,12 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			if (blocks.some(b => b.type === "toolCall")) return;
 			const text = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("\n").trim();
 			if (!text) return;
+			const kind = handbackKind(text);
+			const task = taskOfAgent(l, id);
+			// 负责 agent 交回了结果，这一轮却没记任务表：记一笔，主会话的摘要里会看到，任务卡里它自己也看到
+			if (task && kind && completedTurn(last?.stopReason) && !recorded.has(id)) record({ sid: s, kind: "unrecorded", line: task.name, agent: id, handback: kind });
 			if (!e.awaitingAsyncWork) releaseHandback(join(HELD, s), id, text);
-			else if (handbackKind(text)) holdHandback(join(HELD, s), id, text, Date.now());
+			else if (kind) holdHandback(join(HELD, s), id, text, Date.now());
 		} catch (err) {
 			logError("held hand-back", err);
 		}
@@ -587,6 +605,8 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const to = e.toolName === "write" ? /^agent:\/\/([^/?#]+)/.exec(String(e.args?.path ?? ""))?.[1] : undefined;
 			if (to && to !== "all" && to !== "Main") screen.handedTo(to);
 		}
+		const recorder = isMain(ctx) ? undefined : recorderOf(ctx.agent?.id ?? "", e.toolName);
+		if (recorder) recorded.add(recorder);
 		if (e.toolCallId && worthKeeping(e.toolName, e.args)) pending.set(e.toolCallId, { toolName: e.toolName, args: e.args });
 	});
 	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean; result?: unknown }, ctx: Ctx) => {
@@ -652,13 +672,15 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	const updateTool = {
 		name: "tasktable_update",
 		label: "Task table update",
-		description: "Create or update one item (a step or sub-piece of work) inside a task. Call it whenever an item's status, next step, chase date or PR changes. Only the fields you pass are changed.",
+		description: "Create or update one item (a step or sub-piece of work) inside a task. Call it whenever an item's state, next step, chase date or PR changes. Only the fields you pass are changed. state 等别人 needs waiting_on and chase.",
 		parameters: z.object({
 			task: z.string().optional().describe(`Task name; use ${GENERAL} for things outside any task.`),
 			id: z.string().describe("Item id inside the task, e.g. T6. A new id creates an item."),
 			title: z.string().optional().describe("Short item name the operator understands (no codes)."),
-			status: z.string().optional().describe("e.g. 进行中 / 等你 / 等别人（某某） / 完成"),
-			next: z.string().optional().describe("Next step, and for waiting items where the reply will come from."),
+			state: z.enum(STATES).optional().describe("Structured state of the item."),
+			waiting_on: z.string().optional().describe("Who the item waits on (a person or team), and where the reply will come from. Required with state 等别人."),
+			status: z.string().optional().describe("Optional short free-text note on the state, e.g. 待 Carlos 审 ADR-0033. Defaults to state."),
+			next: z.string().optional().describe(`The one next step, at most ${NEXT_MAX} characters; history and evidence go in source.`),
 			chase: z.string().optional().describe("Chase date YYYY-MM-DD for waiting items."),
 			pr: z.string().optional().describe("PR link once one exists."),
 			source: z.string().optional().describe("Evidence link or place."),
@@ -666,8 +688,14 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		async execute(_id: string, p: UpdateParams, _signal: unknown, _onUpdate: unknown, ctx: Ctx) {
 			const s = sidOf(ctx);
 			const line = taskOr(p.task);
+			if (p.next && p.next.length > NEXT_MAX) throw new Error(`next is ${p.next.length} characters; keep it to one step within ${NEXT_MAX}, put history and evidence in source`);
+			if (p.state === "等别人") {
+				const old = readTable().items.get(line)?.get(p.id);
+				if (!(p.waiting_on ?? old?.waiting_on)?.trim()) throw new Error("state 等别人 needs waiting_on: who, and where the reply will come from");
+				if (!(p.chase ?? old?.chase)?.trim()) throw new Error("state 等别人 needs chase: a YYYY-MM-DD date to check again");
+			}
 			const { task: _task, ...fields } = p;
-			record({ sid: s, kind: "item", line, ...fields });
+			record({ sid: s, kind: "item", line, ...fields, by: isMain(ctx) ? "main" : (ctx.agent?.id ?? "subagent") });
 			return { content: [{ type: "text", text: `recorded ${line}/${p.id}` }] };
 		},
 	};

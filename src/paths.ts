@@ -29,3 +29,4 @@ export const HEADS = join(HOME, "state/heads"); // 每个会话一个文件：�
 export const HELD = join(HOME, "state/held"); // 每个主会话一个目录：子代理写好了、omp 还压着没送的交回
 export const REVIEWING = join(HOME, "state/reviewing"); // 每个主会话一个文件：哪些任务正在被审查，负责 agent 据此先不把结果发出去
 export const TRIAGE_LOG = join(HOME, "state/triage.jsonl"); // 接收程序分拣过的消息：拦下的只记在这里，不进收件箱
+export const SERVICE_STATE = join(HOME, "state/service.json"); // 常驻服务写的实际端口和 pid：状态栏和看板链接用它

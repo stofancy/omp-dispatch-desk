@@ -140,13 +140,18 @@ async function connectOnce(): Promise<void> {
 	clearInterval(beat);
 }
 
-for (;;) {
-	try {
-		await connectOnce();
-	} catch (err) {
-		log(`connect failed: ${err}`);
-		health(String(err));
-		await Bun.sleep(10_000);
+// 常驻服务（service.ts）和单独运行都从这里进：断开就重连，永不返回
+export async function runSlackSocket(): Promise<never> {
+	for (;;) {
+		try {
+			await connectOnce();
+		} catch (err) {
+			log(`connect failed: ${err}`);
+			health(String(err));
+			await Bun.sleep(10_000);
+		}
+		await Bun.sleep(1000);
 	}
-	await Bun.sleep(1000);
 }
+
+if (import.meta.main) await runSlackSocket();

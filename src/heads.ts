@@ -75,6 +75,11 @@ export function tailTriggers(messages: unknown[]): Array<{ at: number; triggers:
 const KIND = /^(不通过|通过|进展|等别人|要用户定|做完|待审查|卡住|不归我)/;
 
 // 一段回复是不是一条交回，是的话是哪一种。「进展」不算：没人等的进展不值得为它叫醒主会话
+// 调了任务表工具（任何一个 tasktable_*）就算这一轮记过账；帮手代记的算到它所属的负责 agent 名下
+export const recorderOf = (agentId: string, toolName: string): string | undefined => (agentId && toolName.startsWith("tasktable_") ? agentId.split(".")[0] : undefined);
+// 被中止或出错的回合不算交回
+export const completedTurn = (stopReason?: string): boolean => stopReason !== "aborted" && stopReason !== "error";
+
 export function handbackKind(text: string): string | undefined {
 	const kind = KIND.exec(firstLine(text))?.[1];
 	return kind === "进展" ? undefined : kind;

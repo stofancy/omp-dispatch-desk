@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { foldEvents } from "./table";
-import { correctionLine, decidedFor, renderTask, snapshot } from "./views";
+import { type Task, foldEvents } from "./table";
+import { correctionLine, decidedFor, renderTask, snapshot, taskCard } from "./views";
 
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 18, 1, minute)).toISOString();
 const ev = (minute: number, kind: string, line: string | undefined, extra: Record<string, unknown> = {}) => JSON.stringify({ ts: at(minute), sid: "s", kind, line, ...extra });
@@ -88,4 +88,17 @@ test("纠正走到哪一步，摘要里就说哪一步：规则提议还在等�
 	expect(answered).toContain("question 6 is closed: 规则提议：草稿写成口语（同意 / 不同意） → 同意");
 	expect(answered).toContain("tasktable_correction close n=3");
 	expect(snapshot([], l)).toContain("Open corrections:\n- [1] (A) 旧纠正");
+});
+
+test("负责 agent 的任务卡末尾附要它补写的事项（最多 3 条）和没记任务表的交回", () => {
+	const l = foldEvents([
+		JSON.stringify({ ts: "2026-11-01T00:00:00Z", sid: "s", kind: "task", line: "PROJ-7", agent: "Proj7", done_when: "x" }),
+		...["T1", "T2", "T3", "T4"].map(id => JSON.stringify({ ts: "2026-11-01T00:00:00Z", sid: "s", kind: "item", line: "PROJ-7", id, title: id, status: "进行中" })),
+		JSON.stringify({ ts: "2026-11-01T00:00:01Z", sid: "s", kind: "unrecorded", line: "PROJ-7", agent: "Proj7", handback: "做完" }),
+	]);
+	const card = taskCard(l.tasks.get("PROJ-7") as Task, l);
+	expect(card).toContain("交回「做完」时没有更新任务表");
+	expect(card).toContain("另有 1 项见看板");
+	expect(card.match(/^- \[T\d\]/gm)?.length).toBe(3);
+	expect(taskCard(l.tasks.get("PROJ-7") as Task)).not.toContain("补写");
 });

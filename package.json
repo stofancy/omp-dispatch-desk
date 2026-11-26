@@ -9,6 +9,9 @@
   "repository": { "type": "git", "url": "git+https://github.com/stofancy/omp-dispatch-desk.git" },
   "keywords": ["omp", "oh-my-pi", "omp-plugin", "agent", "orchestration", "dispatch"],
   "files": ["src", "prompts", "skills", "sources", "scripts", "deploy", "config.example.json", "README.md", "LICENSE"],
+  "scripts": {
+    "board": "bun scripts/board.ts"
+  },
   "omp": {
     "extensions": ["./src/index.ts"]
   }

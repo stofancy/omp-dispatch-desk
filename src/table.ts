@@ -8,7 +8,8 @@ export const GENERAL = "日常"; // 不属于任何任务的事
 
 export type Ev = { ts: string; sid: string; kind: string; line?: string; [k: string]: unknown };
 export interface Review { verdict: "pass" | "fail"; by: string; at: string; evidence: string; findings: string }
-export interface Item { line: string; id: string; title: string; status: string; next?: string; chase?: string; pr?: string; source?: string; updated: string; review?: Review }
+export const STATES = ["进行中", "等你", "等别人", "卡住", "待审查", "完成", "取消"] as const; // 事项的结构化状态；status 留作补充说明
+export interface Item { line: string; id: string; title: string; status: string; state?: string; waiting_on?: string; next?: string; chase?: string; pr?: string; source?: string; by?: string; updated: string; review?: Review }
 export interface Ask { n: number; line: string; text: string; opened: string }
 export interface Correction extends Ask { rule?: string; ask?: number } // ask：规则提议登记成的那个提问的编号
 export interface Task {
@@ -35,18 +36,41 @@ export interface Table {
 	lastInput?: string; // 用户最近一次发话的时间
 	lastInputSid?: string; // 那次发话所在的会话：开着几个会话时，外部消息只交给它
 	lastReply?: string; // 最近一次给用户最终回复的时间：「离开多久」从发话和回复里较晚的那个算
+	unrecorded: Map<string, Ev>; // 任务 → 负责 agent 交回了却没记任务表的那一次；之后这个任务有事项更新就清掉
 }
 
 export const today = () => new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD，本地时区
 export const isDone = (s: string) => /^(完成|done|closed|已完成|取消|cancelled|merged)/i.test(s.trim());
 // 记成这些状态要先有通过的审查；「取消」不用
 export const needsReview = (s: string) => isDone(s) && !/^(取消|cancelled)/i.test(s.trim());
+
+const STALE_DAYS = 3;
+// 事项为什么需要整理：多久没动、催办过期、等别人缺等谁或催办日期、同任务里标题重复。看板和负责 agent 的任务卡共用
+export function tidyReasons(i: Item, day: string, dupTitle: boolean): string[] {
+	const out: string[] = [];
+	const idle = Math.floor((Date.parse(`${day}T23:59:59`) - Date.parse(i.updated)) / 864e5);
+	if (idle >= STALE_DAYS) out.push(`${idle} 天没更新`);
+	if (i.chase && i.chase < day) out.push(`催办已过（${i.chase}）`);
+	if ((i.state ?? i.status).startsWith("等别人")) {
+		if (!i.chase) out.push("等别人但没写催办日期");
+		if (!i.waiting_on && !/^等别人（[^）]+）/.test(i.status)) out.push("没写等谁");
+	}
+	if (dupTitle) out.push("标题重复");
+	return out;
+}
+
+export function tidyItems(l: Table, task: string, day: string): Array<{ item: Item; reasons: string[] }> {
+	const open = [...(l.items.get(task)?.values() ?? [])].filter(i => !isDone(i.status));
+	const titles: Record<string, number> = {};
+	for (const i of open) titles[i.title] = (titles[i.title] ?? 0) + 1;
+	return open.map(item => ({ item, reasons: tidyReasons(item, day, titles[item.title] > 1) })).filter(x => x.reasons.length);
+}
 export const EVENTS = join(TASKS, "events.jsonl");
 
 let cache: { key: string; table: Table } | undefined;
 
 export function foldEvents(rawLines: Iterable<string>): Table {
-	const table: Table = { tasks: new Map(), items: new Map(), asks: new Map(), lastAsk: 0, corrections: new Map(), lastCorrection: 0, decisions: [], actions: [] };
+	const table: Table = { tasks: new Map(), items: new Map(), asks: new Map(), lastAsk: 0, corrections: new Map(), lastCorrection: 0, decisions: [], actions: [], unrecorded: new Map() };
 	for (const raw of rawLines) {
 		if (!raw.trim()) continue;
 		try {
@@ -111,12 +135,15 @@ function fold(l: Table, ev: Ev): void {
 			if (!byTask) l.items.set(line, (byTask = new Map()));
 			const next: Item = { ...(byTask.get(id) ?? { line, id, title: id, status: "" }), updated: ev.ts };
 			const wasDone = isDone(next.status);
-			for (const f of ["title", "status", "next", "chase", "pr", "source"] as const) {
+			for (const f of ["title", "status", "state", "waiting_on", "next", "chase", "pr", "source", "by"] as const) {
 				const v = ev[f];
 				if (typeof v === "string") next[f] = v;
 			}
+			if (typeof ev.state === "string" && typeof ev.status !== "string") next.status = ev.state; // 只给了 state：status 跟着变，isDone 等老逻辑照常工作
 			if (wasDone && !isDone(next.status)) next.review = undefined; // 重新打开的事项：之前的审查不算数
 			byTask.set(id, next);
+			// 只有负责 agent 本人（或它的帮手）记账才清掉漏记提示；主会话或别人改事项不算
+			if (String(ev.by ?? "").split(".")[0] === l.unrecorded.get(line)?.agent) l.unrecorded.delete(line);
 			break;
 		}
 		case "ask":
@@ -146,6 +173,9 @@ function fold(l: Table, ev: Ev): void {
 		case "action":
 		case "inbox":
 			l.actions.push(ev);
+			break;
+		case "unrecorded":
+			l.unrecorded.set(line, ev);
 			break;
 	}
 }

@@ -1,0 +1,108 @@
+/* 任务看板样式：沿用 CNP-1165 作战板的纸质简报版式。 */
+
+:root{
+  --paper:#eee6d3; --paper-2:#f6f0e1; --card:#fcf9f0; --ink:#1d1b17; --ink-2:#4b463a; --muted:#80786a;
+  --soft:#d8ceb6; --soft-2:#e7dfc9;
+  --red:#cf3a1f; --red-bg:#f8ddd3; --green:#2c6a4b; --green-bg:#dbeadf; --blue:#2a4a8a; --blue-bg:#dce4f2;
+  --gold:#f1c740; --gold-bg:#faefba; --violet:#68478f; --violet-bg:#e8e0f1;
+  --serif:"Fraunces","Noto Serif SC","Source Han Serif SC","Songti SC","STSong","Noto Serif CJK SC","SimSun",serif;
+  --sans:"Noto Sans SC","PingFang SC","Microsoft YaHei","Noto Sans CJK SC","WenQuanYi Micro Hei",sans-serif;
+  --mono:"JetBrains Mono","SFMono-Regular",Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+html,body{margin:0}
+body{
+  background:var(--paper) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .11 0 0 0 0 .09 0 0 0 0 .06 0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  color:var(--ink); font:15px/1.65 var(--sans); -webkit-font-smoothing:antialiased;
+}
+a{color:var(--blue);text-underline-offset:2px}
+a:hover{color:var(--red)}
+code{font-family:var(--mono);font-size:.88em;background:#1d1b170f;padding:1px 5px;border-radius:3px;word-break:break-word}
+b{font-weight:700}
+[id]{scroll-margin-top:84px}
+mark{background:linear-gradient(transparent 58%,var(--gold) 58% 92%,transparent 92%);color:inherit;padding:0 .08em}
+
+/* ---------- 顶栏 ---------- */
+.top{position:sticky;top:0;z-index:50;background:var(--ink);color:var(--paper-2);border-bottom:4px solid var(--gold)}
+.top-in{max-width:1320px;margin:0 auto;padding:0 32px;display:flex;align-items:stretch;gap:28px;height:58px}
+.brand{display:flex;flex-direction:column;justify-content:center;line-height:1.1;text-decoration:none;color:inherit;flex:none}
+.brand b{font:900 21px var(--serif);letter-spacing:.02em}
+.brand span{font:500 10.5px var(--mono);letter-spacing:.14em;color:#b9ae94;text-transform:uppercase;margin-top:3px}
+.nav{display:flex;gap:2px;flex:1}
+.nav a{display:flex;align-items:center;padding:0 16px;color:#d9cfb6;text-decoration:none;font-weight:500;font-size:14.5px;position:relative;white-space:nowrap}
+.nav a:hover{color:#fff;background:#ffffff12}
+.nav a.cur{color:var(--ink);background:var(--gold);font-weight:700}
+.chip{align-self:center;flex:none;font:600 12px var(--mono);padding:5px 11px;border:2px solid var(--red);border-radius:3px;color:#ffd9cf;background:#cf3a1f33;text-decoration:none;white-space:nowrap}
+.chip::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:8px;animation:blink 1.6s infinite}
+.chip.ok{border-color:#5fae86;color:#cdeedc;background:#2c6a4b44}
+.chip.ok::before{background:#5fae86;animation:none}
+@keyframes blink{50%{opacity:.25}}
+
+.page{max-width:1320px;margin:0 auto;padding:30px 32px 70px}
+.foot{max-width:1320px;margin:0 auto;padding:0 32px 36px;font:12px var(--mono);color:var(--muted)}
+.foot a{color:var(--muted)}
+
+/* ---------- 通用部件 ---------- */
+.kicker{font:600 11px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.sec{display:flex;align-items:baseline;gap:12px;border-top:3px solid var(--ink);padding-top:9px;margin:36px 0 14px}
+.sec h2{margin:0;font:800 23px/1.2 var(--serif)}
+.sec .kicker{margin-left:auto}
+.pg-title{margin:0 0 6px;font:900 38px/1.15 var(--serif);letter-spacing:.01em}
+.pg-sub{color:var(--ink-2);margin:0 0 6px;max-width:80ch}
+.card{background:var(--card);border:2px solid var(--ink);border-radius:4px;box-shadow:5px 5px 0 var(--ink);padding:18px 22px}
+.card.flat{box-shadow:none;border-width:1.5px}
+.card.red{border-color:var(--red);box-shadow:5px 5px 0 var(--red)}
+.card.gold{background:var(--gold-bg);box-shadow:5px 5px 0 var(--ink)}
+.card h3{margin:0 0 8px;font:800 17px var(--serif)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono)}
+.ok{color:var(--green);font-weight:700}.bad{color:var(--red);font-weight:700}.mid{color:#8a5200;font-weight:700}
+.hidden{display:none!important}
+
+button,.btn{font:600 13px var(--sans);color:var(--ink);background:var(--card);border:1.5px solid var(--ink);border-radius:3px;padding:5px 11px;cursor:pointer;text-decoration:none;display:inline-block}
+button:hover,.btn:hover{background:var(--gold)}
+button.on{background:var(--ink);color:var(--paper-2)}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+
+.tag{display:inline-block;font:600 11px var(--mono);padding:1px 6px;border-radius:3px;border:1.5px solid var(--soft);color:var(--ink-2);white-space:nowrap;line-height:1.5;background:#ffffff80}
+.tag.me{color:var(--green);border-color:var(--green);background:var(--green-bg)}
+.tag.other{color:var(--violet);border-color:var(--violet);background:var(--violet-bg)}
+.tag.ai{color:var(--blue);border-color:var(--blue);background:var(--blue-bg)}
+.tag.where{border-style:dashed;color:var(--ink-2)}
+.tag.warn{color:#fff;background:var(--red);border-color:var(--red)}
+.tag.remote{background:var(--gold-bg);border-color:#b38b00;color:#5b4500}
+.tag.wait{color:var(--blue);border-color:var(--blue);background:transparent}
+.tag.gate{color:var(--red);border-color:var(--red);background:var(--red-bg)}
+table.t{width:100%;border-collapse:collapse;font-size:14px}
+table.t th{text-align:left;font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:8px 10px;border-bottom:2px solid var(--ink);white-space:nowrap}
+table.t td{padding:9px 10px;border-bottom:1px solid var(--soft);vertical-align:top}
+table.t tr:last-child td{border-bottom:0}
+
+/* ---------- 任务看板 ---------- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:18px 0 6px}
+.stat{background:var(--card);border:2px solid var(--ink);border-radius:4px;box-shadow:4px 4px 0 var(--ink);padding:12px 16px}
+.stat b{display:block;font:900 34px/1.1 var(--serif)}
+.stat span{font:600 11px var(--mono);letter-spacing:.12em;color:var(--muted)}
+.stat.hot{border-color:var(--red);box-shadow:4px 4px 0 var(--red)}.stat.hot b{color:var(--red)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:18px}
+.tcard{display:block;color:inherit;text-decoration:none}
+.tcard:hover{background:var(--paper-2);color:inherit}
+.tcard h3 .name{font:600 12px var(--mono);color:var(--muted);display:block;margin-bottom:2px}
+.bar{display:flex;height:12px;border:1.5px solid var(--ink);border-radius:2px;overflow:hidden;margin:10px 0 6px;background:var(--paper-2)}
+.bar i{display:block;height:100%}
+.k-done{background:var(--green)}.k-cancelled{background:var(--soft)}.k-review{background:var(--violet)}.k-active{background:var(--blue)}
+.k-waiting{background:var(--gold)}.k-you{background:#e07a2c}.k-blocked{background:var(--red)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font:12px var(--mono);color:var(--ink-2)}
+.legend i{display:inline-block;width:10px;height:10px;margin-right:5px;border:1px solid var(--ink);vertical-align:-1px}
+.st{display:inline-block;font:600 12px var(--sans);padding:1px 7px;border-radius:3px;border:1.5px solid currentColor;white-space:nowrap}
+.st.you{color:#a24b00;background:#fde3c8}.st.blocked{color:var(--red);background:var(--red-bg)}.st.waiting{color:#5b4500;background:var(--gold-bg)}
+.st.review{color:var(--violet);background:var(--violet-bg)}.st.active{color:var(--blue);background:var(--blue-bg)}.st.done{color:var(--green);background:var(--green-bg)}.st.cancelled{color:var(--muted)}
+.meta{font-size:13px;color:var(--ink-2);margin:4px 0}
+.due{color:var(--red);font-weight:700}
+.tl{list-style:none;margin:0;padding:0;font-size:13.5px}
+.tl li{padding:6px 0;border-bottom:1px dashed var(--soft)}
+.tl .when{font:12px var(--mono);color:var(--muted);margin-right:8px}
+details.done summary{cursor:pointer;font-weight:600}
+.err{color:var(--red);font-weight:700}
+.card.flat{overflow-x:auto}

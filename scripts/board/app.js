@@ -75,7 +75,7 @@ function home(d) {
     return `<div class="card tcard">
       <h3><span class="name">${esc(t.name)} · ${esc(t.agent || "无负责 agent")}</span><a href="${href}">${esc(t.title || t.name)}</a></h3>
       ${bar(t)}
-      <div class="meta">事项 ${t.progress.closed}/${t.items.length} 已关闭 · 未关闭 ${open.length}${t.counts.you ? ` · <b class="bad">等你 ${t.counts.you}</b>` : ""}${t.counts.blocked ? ` · <b class="bad">卡住 ${t.counts.blocked}</b>` : ""}${t.chaseDue ? ` · <span class="due">到期催办 ${t.chaseDue}</span>` : ""}${t.asks.length ? ` · 待决定 #${t.asks.join(" #")}` : ""}${t.tidy.length ? ` · <span class="mid">需要整理 ${t.tidy.length}</span>` : ""}</div>
+      <div class="meta">事项 ${t.progress.closed}/${t.items.length} 已关闭 · 未关闭 ${open.length}${t.counts.you ? ` · <b class="bad">等你 ${t.counts.you}</b>` : ""}${t.counts.blocked ? ` · <b class="bad">卡住 ${t.counts.blocked}</b>` : ""}${t.chaseDue ? ` · <span class="due">到期催办 ${t.chaseDue}</span>` : ""}${t.asks.length ? ` · 待决定 #${t.asks.join(" #")}` : ""}${t.tidy.length ? ` · <span class="mid">需要整理 ${t.tidy.length}</span>` : ""}${t.unrecorded ? ` · <b class="bad">⚠ 上次交回没记任务表</b>` : ""}</div>
       ${tracked.length ? `<ul class="tl">${tracked.map(i => `<li><span class="mono">${esc(i.id)}</span> ${st(i)}${i.chase ? ` · 催办 <span class="mono">${chase(i.chase, d.today)}</span>` : ""}${i.pr ? ` · ${link(i.pr)}` : ""}</li>`).join("")}</ul>` : ""}
       ${prs.length ? `<div class="meta">PR：${prs.map(link).join(" · ")}</div>` : ""}
       <div class="meta muted">最近更新 ${when(t.updated)} · <a href="${href}">详情 →</a> · <a href="#/s/${enc(t.name)}">摘要</a> · <button data-copy="${esc(t.name)}">复制给同事</button></div></div>`;
@@ -100,6 +100,7 @@ function evText(e) {
   switch (e.kind) {
     case "item": return `事项 ${e.id}${e.title ? ` ${e.title}` : ""}${e.state || e.status ? ` → ${e.status || e.state}` : ""}${e.waiting_on ? `（等 ${e.waiting_on}）` : ""}${e.next ? `；下一步：${e.next}` : ""}${e.by ? ` · ${e.by}` : ""}`;
     case "inbox": return `外部消息：${e.who ?? ""} @ ${e.where ?? ""}`;
+    case "unrecorded": return `⚠ ${e.agent ?? ""} 交回「${e.handback ?? ""}」时没更新任务表`;
     case "task": return `任务${e.status ? ` → ${e.status}` : " 登记/更新"}${e.agent ? `（负责 ${e.agent}）` : ""}`;
     case "decision": return `决定：${e.text}`;
     case "review": return `审查${e.item ? ` ${e.item}` : "整个任务"}：${e.verdict === "pass" ? "通过" : "不通过"}（${e.by}）`;
@@ -120,6 +121,7 @@ function detail(d, name) {
     <h1 class="pg-title">${esc(t.title || t.name)}</h1>
     <p class="pg-sub">状态：<b>${esc(t.status)}</b> · 负责 agent：<span class="mono">${esc(t.agent || "（无）")}</span> · 任务审查：${t.review ? (t.review.verdict === "pass" ? '<span class="ok">通过</span>' : '<span class="bad">不通过</span>') : "（无）"}</p>
     ${bar(t)}${legend}
+    ${t.unrecorded ? `<p class="bad">⚠ ${esc(t.unrecorded.agent)} ${when(t.unrecorded.at)} 交回「${esc(t.unrecorded.handback)}」时没更新任务表；下次它更新事项后这条消失</p>` : ""}
     <div class="card" style="margin-top:16px"><h3>目标</h3><p>${esc(t.goal || "（无）")}</p><h3>完成判据</h3><p>${esc(t.doneWhen || "（无）")}</p>
     ${t.watch.length ? `<h3>盯的外部输入</h3><ul>${t.watch.map(w => `<li>${link(w)}</li>`).join("")}</ul>` : ""}</div>
     <div class="sec"><h2>未关闭事项</h2><span class="kicker">${open.length} 项 · <a href="#/s/${enc(t.name)}">一屏摘要</a> · <button data-copy="${esc(t.name)}">复制给同事</button></span></div>${itemTable(open, d.today)}

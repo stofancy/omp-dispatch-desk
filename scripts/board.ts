@@ -2,7 +2,7 @@
 // 用法：bun scripts/board.ts [端口]，默认 127.0.0.1:8768。只读，不写数据目录。
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { EVENTS, type Ev, GENERAL, type Item, type Review, type Task, foldEvents, isDone, openTasks, today } from "../src/table";
+import { EVENTS, type Ev, GENERAL, type Item, type Review, type Task, foldEvents, isDone, openTasks, tidyItems, today } from "../src/table";
 
 // 有结构化 state 的照 state 分类；旧数据只有自由文本 status，按写法粗分，分不出的算进行中
 export type Kind = "you" | "blocked" | "waiting" | "review" | "active" | "done" | "cancelled";
@@ -22,27 +22,14 @@ export function kindOf(status: string, state?: string): Kind {
 // 旧数据没有 waiting_on：从「等别人（某某）」的括号里取
 const waitingOf = (i: Item) => i.waiting_on || /^等别人（([^）]+)）/.exec(i.status)?.[1] || "";
 
-const TIMELINE_KINDS: Record<string, true> = { task: true, item: true, decision: true, review: true, ask: true, ask_close: true, action: true, correction: true, inbox: true };
+const TIMELINE_KINDS: Record<string, true> = { task: true, item: true, decision: true, review: true, ask: true, ask_close: true, action: true, correction: true, inbox: true, unrecorded: true };
 const TIMELINE_MAX = 60;
 const ACTIONS_MAX = 30;
 const HISTORY_MAX = 50;
-const STALE_DAYS = 3;
 
 const reviewOf = (r?: Review) => (r ? { verdict: r.verdict, by: r.by, at: r.at, evidence: r.evidence, findings: r.findings } : undefined);
 export interface BoardItem { id: string; title: string; status: string; state?: string; kind: Kind; waitingOn: string; next?: string; chase?: string; pr?: string; source?: string; by?: string; updated: string; review?: Review }
 const itemOf = (i: Item): BoardItem => ({ id: i.id, title: i.title, status: i.status, state: i.state, kind: kindOf(i.status, i.state), waitingOn: waitingOf(i), next: i.next, chase: i.chase, pr: i.pr, source: i.source, by: i.by, updated: i.updated, review: reviewOf(i.review) });
-
-// 需要整理的事项：多久没动、催办过期、等别人没写催办日期、同任务里标题重复
-export function tidyReasons(i: BoardItem, day: string, dupTitle: boolean): string[] {
-	const out: string[] = [];
-	const idle = Math.floor((Date.parse(`${day}T23:59:59`) - Date.parse(i.updated)) / 864e5);
-	if (idle >= STALE_DAYS) out.push(`${idle} 天没更新`);
-	if (i.chase && i.chase < day) out.push(`催办已过（${i.chase}）`);
-	if (i.kind === "waiting" && !i.chase) out.push("等别人但没写催办日期");
-	if (i.kind === "waiting" && !i.waitingOn) out.push("没写等谁");
-	if (dupTitle) out.push("标题重复");
-	return out;
-}
 
 function parse(lines: string[]): Ev[] {
 	const out: Ev[] = [];
@@ -66,12 +53,11 @@ export function buildBoard(lines: string[], day: string = today()) {
 		const open = items.filter(i => i.kind !== "done" && i.kind !== "cancelled");
 		const counts: Record<string, number> = {};
 		for (const i of items) counts[i.kind] = (counts[i.kind] ?? 0) + 1;
-		const titles: Record<string, number> = {};
-		for (const i of open) titles[i.title] = (titles[i.title] ?? 0) + 1;
 		const history: Record<string, Ev[]> = {};
 		for (const e of events) if (e.kind === "item" && e.line === t.name) (history[String(e.id)] ??= []).push(e);
 		for (const id in history) history[id] = history[id].slice(-HISTORY_MAX).reverse();
-		const tidy = open.map(i => ({ ...i, task: t.name, reasons: tidyReasons(i, day, titles[i.title] > 1) })).filter(i => i.reasons.length);
+		const tidy = tidyItems(l, t.name, day).map(x => ({ ...itemOf(x.item), task: t.name, reasons: x.reasons }));
+		const missed = l.unrecorded.get(t.name);
 		return {
 			name: t.name,
 			title: t.title,
@@ -91,6 +77,7 @@ export function buildBoard(lines: string[], day: string = today()) {
 			timeline: events.filter(e => e.line === t.name && TIMELINE_KINDS[e.kind]).slice(-TIMELINE_MAX).reverse(),
 			history,
 			tidy,
+			unrecorded: missed ? { at: missed.ts, agent: String(missed.agent ?? ""), handback: String(missed.handback ?? "") } : undefined,
 		};
 	};
 

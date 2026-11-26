@@ -104,6 +104,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	let inboxSinceInput = 0;
 	let urgentSinceInput = 0;
 	const pending = new Map<string, { toolName: string; args: Input | undefined }>(); // toolCallId → 调用参数，结果回来时按回执判断
+	const recorded = new Set<string>(); // 这一轮调过任务表工具的子代理
 	let replyNote: string | undefined; // 上一次回复的检查结果，下一次请求提醒模型
 	let awayNote: string | undefined; // 用户离开一段时间后回来：这期间的变化
 	let awayDelivered = false; // 离开提示已随用户那条消息交付，那一轮答完就清掉
@@ -470,7 +471,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const owned = id && !id.includes(".") ? taskOfAgent(l, id) : undefined;
 			const reviewed = taskOfReviewer(l, id);
 			if (owned) {
-				text += `<dispatch-desk-owner-rules>\n${renderRules(PROMPTS.owner, settings())}</dispatch-desk-owner-rules>\n${taskCard(owned)}`;
+				text += `<dispatch-desk-owner-rules>\n${renderRules(PROMPTS.owner, settings())}</dispatch-desk-owner-rules>\n${taskCard(owned, l)}`;
 				// 主会话派出的审查者还在跑：这份结果先别往外发，免得审查不通过还得再去更正
 				const r = readReviewing(sessionOf(ctx))[owned.name];
 				if (r)
@@ -509,6 +510,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	});
 	pi.on("agent_start", async (_e: unknown, ctx: Ctx) => {
 		if (isMain(ctx) && on(ctx)) screen.turnStart();
+		if (!isMain(ctx)) recorded.delete(ctx.agent?.id ?? ""); // 负责 agent 新一轮：重新看它这轮记没记任务表
 	});
 	pi.on("agent_end", async (e: { messages?: Array<{ role?: string; content?: unknown }>; awaitingAsyncWork?: boolean }, ctx: Ctx) => {
 		if (isMain(ctx)) {
@@ -530,8 +532,12 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			if (blocks.some(b => b.type === "toolCall")) return;
 			const text = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("\n").trim();
 			if (!text) return;
+			const kind = handbackKind(text);
+			const task = taskOfAgent(l, id);
+			// 负责 agent 交回了结果，这一轮却没记任务表：记一笔，主会话的摘要里会看到，任务卡里它自己也看到
+			if (task && kind && !recorded.has(id)) record({ sid: s, kind: "unrecorded", line: task.name, agent: id, handback: kind });
 			if (!e.awaitingAsyncWork) releaseHandback(join(HELD, s), id, text);
-			else if (handbackKind(text)) holdHandback(join(HELD, s), id, text, Date.now());
+			else if (kind) holdHandback(join(HELD, s), id, text, Date.now());
 		} catch (err) {
 			logError("held hand-back", err);
 		}
@@ -588,6 +594,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const to = e.toolName === "write" ? /^agent:\/\/([^/?#]+)/.exec(String(e.args?.path ?? ""))?.[1] : undefined;
 			if (to && to !== "all" && to !== "Main") screen.handedTo(to);
 		}
+		if (!isMain(ctx) && (e.toolName === "tasktable_update" || e.toolName === "tasktable_task")) recorded.add(ctx.agent?.id ?? "");
 		if (e.toolCallId && worthKeeping(e.toolName, e.args)) pending.set(e.toolCallId, { toolName: e.toolName, args: e.args });
 	});
 	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean; result?: unknown }, ctx: Ctx) => {

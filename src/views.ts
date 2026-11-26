@@ -1,7 +1,9 @@
 // 给人看的 Markdown 视图（tasks/views/），以及每次请求注入的任务表摘要和任务卡。都由程序生成。
 import { join } from "node:path";
 import { TASKS } from "./paths";
-import { type Correction, type Ev, GENERAL, type Item, type Review, type Table, type Task, isDone, openItems, openTasks, readTable, today, writeAtomic } from "./table";
+import { type Correction, type Ev, GENERAL, type Item, type Review, type Table, type Task, isDone, openItems, openTasks, readTable, tidyItems, today, writeAtomic } from "./table";
+
+const TIDY_MAX = 3;
 
 const SNAPSHOT_MAX = 4000; // 字符
 const RECENT_DECISIONS = 10;
@@ -186,14 +188,22 @@ export function snapshot(running: string[], l: Table = readTable(), monitoring: 
 	].join("\n");
 }
 
-// 每次请求注入给任务的负责 agent：这个任务登记在任务表里的内容。压缩之后它也还看得到自己负责什么、盯着什么
-export function taskCard(t: Task): string {
+// 每次请求注入给任务的负责 agent：这个任务登记在任务表里的内容。压缩之后它也还看得到自己负责什么、盯着什么。
+// 末尾附最多 3 条需要它补写的事项（过期、催办已过、缺等谁），以及上次交回没记任务表的提示：它下一轮顺手补，不找用户
+export function taskCard(t: Task, l?: Table): string {
+	const tidy = l ? tidyItems(l, t.name, today()) : [];
+	const missed = l?.unrecorded.get(t.name);
+	const fix = [
+		...(missed ? [`- 你 ${when(missed.ts)} 交回「${String(missed.handback ?? "")}」时没有更新任务表：用 tasktable_update 补记这次的结果`] : []),
+		...tidy.slice(0, TIDY_MAX).map(x => `- [${x.item.id}] ${x.item.title}：${x.reasons.join("；")}`),
+	];
 	return [
 		`<task-card task="${t.name}">`,
 		`任务：${t.name}${t.title ? ` ${t.title}` : ""}`,
 		`目标：${t.goal || "（没登记）"}`,
 		`完成判据：${t.doneWhen || "（没登记）"}`,
 		`盯的外部输入：${t.watch.length ? t.watch.join("；") : "（无）"}`,
+		...(fix.length ? [`任务表要你补写（更新事项的 state、next、chase；不需要了就记取消）${tidy.length > TIDY_MAX ? `，另有 ${tidy.length - TIDY_MAX} 项见看板` : ""}：`, ...fix] : []),
 		"</task-card>",
 	].join("\n");
 }

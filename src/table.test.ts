@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { agentTaken, doneBlocker, foldEvents, isReviewerName, needsReview, openTasks, taskOfAgent, taskOfReviewer } from "./table";
+import { agentTaken, tidyItems, doneBlocker, foldEvents, isReviewerName, needsReview, openTasks, taskOfAgent, taskOfReviewer } from "./table";
 
 let n = 0;
 const ev = (kind: string, line: string, extra: Record<string, unknown> = {}) => JSON.stringify({ ts: new Date(Date.UTC(2026, 10, 18, 0, 0, n++)).toISOString(), sid: "s", kind, line, ...extra });
@@ -133,4 +133,15 @@ test("事项的 state、waiting_on、by 折叠进事项；只给 state 时 statu
 	]);
 	expect(l.items.get("PROJ-9")?.get("T1")).toMatchObject({ state: "完成", status: "完成", by: "Proj9" });
 	expect(l.items.get("PROJ-9")?.get("T2")).toMatchObject({ state: "等别人", status: "待 Bo 审 ADR", waiting_on: "Bo" });
+});
+
+test("交回没记任务表：记下；之后这个任务有事项更新就清掉。需要整理按原因列出", () => {
+	const l = foldEvents([
+		ev("item", "PROJ-8", { id: "T1", title: "等审", state: "等别人", status: "等别人" }),
+		ev("unrecorded", "PROJ-8", { agent: "Proj8", handback: "做完" }),
+	]);
+	expect(l.unrecorded.get("PROJ-8")).toMatchObject({ agent: "Proj8", handback: "做完" });
+	expect(tidyItems(l, "PROJ-8", "2026-11-30")[0].reasons).toEqual(expect.arrayContaining(["等别人但没写催办日期", "没写等谁"]));
+	const l2 = foldEvents([ev("unrecorded", "PROJ-8", { agent: "Proj8", handback: "做完" }), ev("item", "PROJ-8", { id: "T1", next: "x" })]);
+	expect(l2.unrecorded.has("PROJ-8")).toBe(false);
 });

@@ -142,6 +142,8 @@ test("交回没记任务表：记下；之后这个任务有事项更新就清�
 	]);
 	expect(l.unrecorded.get("PROJ-8")).toMatchObject({ agent: "Proj8", handback: "做完" });
 	expect(tidyItems(l, "PROJ-8", "2026-11-30")[0].reasons).toEqual(expect.arrayContaining(["等别人但没写催办日期", "没写等谁"]));
-	const l2 = foldEvents([ev("unrecorded", "PROJ-8", { agent: "Proj8", handback: "做完" }), ev("item", "PROJ-8", { id: "T1", next: "x" })]);
-	expect(l2.unrecorded.has("PROJ-8")).toBe(false);
+	const l2 = foldEvents([ev("unrecorded", "PROJ-8", { agent: "Proj8", handback: "做完" }), ev("item", "PROJ-8", { id: "T1", next: "x", by: "main" })]);
+	expect(l2.unrecorded.has("PROJ-8")).toBe(true);
+	const l3 = foldEvents([ev("unrecorded", "PROJ-8", { agent: "Proj8", handback: "做完" }), ev("item", "PROJ-8", { id: "T1", next: "x", by: "Proj8.Helper" })]);
+	expect(l3.unrecorded.has("PROJ-8")).toBe(false);
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { handbackKind, headLabel, headLine, rowFor, tailTriggers, triggersOf } from "./heads";
+import { completedTurn, handbackKind, recorderOf, headLabel, headLine, rowFor, tailTriggers, triggersOf } from "./heads";
 import { foldEvents } from "./table";
 
 const ev = (kind: string, line: string, extra: Record<string, unknown> = {}) => JSON.stringify({ ts: "2026-11-19T01:00:00.000Z", sid: "s", kind, line, ...extra });
@@ -78,4 +78,15 @@ test("分割线填到屏幕宽度，标头太长就截断", () => {
 	const long = headLine("📥 交回 · ".concat("很长的任务名".repeat(30)), 60, width);
 	expect(long).toContain("…**");
 	expect(width(long.replaceAll("*", ""))).toBeLessThanOrEqual(60);
+});
+
+test("记账判断：帮手代记算负责 agent 的；任何 tasktable_* 都算；中止或出错的回合不算交回", () => {
+	expect(recorderOf("Proj1.Helper", "tasktable_update")).toBe("Proj1");
+	expect(recorderOf("Proj1", "tasktable_ask")).toBe("Proj1");
+	expect(recorderOf("Proj1", "tasktable_review")).toBe("Proj1");
+	expect(recorderOf("Proj1", "bash")).toBeUndefined();
+	expect(completedTurn("aborted")).toBe(false);
+	expect(completedTurn("error")).toBe(false);
+	expect(completedTurn("stop")).toBe(true);
+	expect(completedTurn(undefined)).toBe(true);
 });

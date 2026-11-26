@@ -17,7 +17,7 @@ import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { holdHandback, releaseHandback } from "./agents";
 import { claimOperator, type Lark, type OperatorMessage, operatorPrompt, projectProfile, pushFeishuAsk, replyFeishu, rememberOwnerChat, runLark } from "./feishu";
-import { handbackKind } from "./heads";
+import { completedTurn, handbackKind, recorderOf } from "./heads";
 import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, TRIAGE_LOG, USER_RULES } from "./paths";
 import { receiptsOf, resultText, worthKeeping } from "./remote";
 import { checkReply, feedback, renderRules, settings } from "./rules";
@@ -512,7 +512,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		if (isMain(ctx) && on(ctx)) screen.turnStart();
 		if (!isMain(ctx)) recorded.delete(ctx.agent?.id ?? ""); // 负责 agent 新一轮：重新看它这轮记没记任务表
 	});
-	pi.on("agent_end", async (e: { messages?: Array<{ role?: string; content?: unknown }>; awaitingAsyncWork?: boolean }, ctx: Ctx) => {
+	pi.on("agent_end", async (e: { messages?: Array<{ role?: string; stopReason?: string; content?: unknown }>; awaitingAsyncWork?: boolean }, ctx: Ctx) => {
 		if (isMain(ctx)) {
 			if (on(ctx)) screen.turnEnd(ctx.ui);
 			userTurn = false;
@@ -535,7 +535,7 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const kind = handbackKind(text);
 			const task = taskOfAgent(l, id);
 			// 负责 agent 交回了结果，这一轮却没记任务表：记一笔，主会话的摘要里会看到，任务卡里它自己也看到
-			if (task && kind && !recorded.has(id)) record({ sid: s, kind: "unrecorded", line: task.name, agent: id, handback: kind });
+			if (task && kind && completedTurn(last?.stopReason) && !recorded.has(id)) record({ sid: s, kind: "unrecorded", line: task.name, agent: id, handback: kind });
 			if (!e.awaitingAsyncWork) releaseHandback(join(HELD, s), id, text);
 			else if (kind) holdHandback(join(HELD, s), id, text, Date.now());
 		} catch (err) {
@@ -594,7 +594,8 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 			const to = e.toolName === "write" ? /^agent:\/\/([^/?#]+)/.exec(String(e.args?.path ?? ""))?.[1] : undefined;
 			if (to && to !== "all" && to !== "Main") screen.handedTo(to);
 		}
-		if (!isMain(ctx) && (e.toolName === "tasktable_update" || e.toolName === "tasktable_task")) recorded.add(ctx.agent?.id ?? "");
+		const recorder = isMain(ctx) ? undefined : recorderOf(ctx.agent?.id ?? "", e.toolName);
+		if (recorder) recorded.add(recorder);
 		if (e.toolCallId && worthKeeping(e.toolName, e.args)) pending.set(e.toolCallId, { toolName: e.toolName, args: e.args });
 	});
 	pi.on("tool_execution_end", async (e: { toolCallId?: string; isError?: boolean; result?: unknown }, ctx: Ctx) => {

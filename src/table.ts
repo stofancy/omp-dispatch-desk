@@ -142,7 +142,8 @@ function fold(l: Table, ev: Ev): void {
 			if (typeof ev.state === "string" && typeof ev.status !== "string") next.status = ev.state; // 只给了 state：status 跟着变，isDone 等老逻辑照常工作
 			if (wasDone && !isDone(next.status)) next.review = undefined; // 重新打开的事项：之前的审查不算数
 			byTask.set(id, next);
-			l.unrecorded.delete(line);
+			// 只有负责 agent 本人（或它的帮手）记账才清掉漏记提示；主会话或别人改事项不算
+			if (String(ev.by ?? "").split(".")[0] === l.unrecorded.get(line)?.agent) l.unrecorded.delete(line);
 			break;
 		}
 		case "ask":

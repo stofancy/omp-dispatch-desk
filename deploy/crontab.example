@@ -1,9 +1,0 @@
-# omp-dispatch-desk 的外部消息源：只读外部系统，只写数据目录里的 inbox/。把 <repo> 换成仓库路径；日志位置自定。
-# 间隔要和程序记健康状态时用的周期一致（都是 5 分钟），否则固定区会误报「没在正常工作」。
-# 配了分拣（config.json 的 triage）时补读要调 omp：PATH 里要有 omp 所在的目录（cron 不展开 $HOME，写绝对路径），或者在 triage.command 里写 omp 的绝对路径。
-# 飞书只补读 config.json 中 poll: true 的账号（私聊、点名 @你、任务登记的会话），需要 PATH 能找到 lark-cli；没有开启补读的账号可以去掉对应的定时任务。
-PATH=/home/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin
-*/5 * * * * cd <repo>/sources && flock -n /tmp/dispatch-desk-slack.lock python3 slack_poll.py
-*/5 * * * * cd <repo>/sources && flock -n /tmp/dispatch-desk-feishu.lock python3 feishu_poll.py
-*/5 * * * * cd <repo>/sources && flock -n /tmp/dispatch-desk-pr.lock python3 pr_poll.py
-*/5 * * * * cd <repo>/sources && flock -n /tmp/dispatch-desk-reminders.lock python3 reminders_poll.py

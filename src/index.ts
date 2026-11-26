@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { holdHandback, releaseHandback } from "./agents";
 import { claimOperator, type Lark, type OperatorMessage, operatorPrompt, projectProfile, pushFeishuAsk, replyFeishu, rememberOwnerChat, runLark } from "./feishu";
 import { completedTurn, handbackKind, recorderOf } from "./heads";
-import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, TRIAGE_LOG, USER_RULES } from "./paths";
+import { DISPATCH_RULES, HELD, HOME, INBOX_CLAIMED, INBOX_NEW, OPERATOR_NEW, ORDERS, OWNER_RULES, REVIEW_RULES, SERVICE_STATE, TRIAGE_LOG, USER_RULES } from "./paths";
 import { receiptsOf, resultText, worthKeeping } from "./remote";
 import { checkReply, feedback, renderRules, settings } from "./rules";
 import { createScreen, messageRow, readReviewing } from "./screen";
@@ -186,12 +186,23 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		return n;
 	};
 
+	// 常驻服务记下的看板端口；服务没装或文件坏了就不显示
+	const boardPort = (): number | undefined => {
+		try {
+			const port: unknown = JSON.parse(readFileSync(SERVICE_STATE, "utf8")).port;
+			return typeof port === "number" ? port : undefined;
+		} catch {
+			return undefined;
+		}
+	};
 	const status = (ctx: Ctx): string => {
 		const l = readTable();
 		const parts = [`📋 任务 ${openTasks(l).length}`, `待你决定 ${l.asks.size}`, `在跑的 agent ${jobs(ctx).length}`, `新消息 ${inboxSinceInput}`];
 		if (urgentSinceInput) parts.push(`其中私信/@你 ${urgentSinceInput}`); // 都是你上次发话以来到的，发话后清零
 		const quiet = droppedSince(l.lastInput);
 		if (quiet) parts.push(`拦下无关 ${quiet}`);
+		const port = boardPort();
+		if (port) parts.push(`看板 http://127.0.0.1:${port}/`);
 		return parts.join(" · ");
 	};
 	const showStatus = (ctx: Ctx) => ctx.ui.setStatus?.(STATUS_KEY, isOn(session) ? status(ctx) : undefined);

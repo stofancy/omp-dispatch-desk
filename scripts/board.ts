@@ -113,22 +113,22 @@ const STATIC = join(import.meta.dir, "board");
 const FILES: Record<string, string> = { "/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css" };
 const TYPES: Record<string, string> = { html: "text/html; charset=utf-8", js: "text/javascript; charset=utf-8", css: "text/css; charset=utf-8" };
 
+// 看板的路由：常驻服务（sources/service.ts）和单独运行共用。不认识的路径返回 undefined
+export function boardResponse(req: Request): Response | undefined {
+	const path = new URL(req.url).pathname;
+	if (path === "/version") return new Response(existsSync(EVENTS) ? String(statSync(EVENTS).mtimeMs) : "0", { headers: { "cache-control": "no-store" } }); // 页面轮询它，任务表一变就重画
+	if (path === "/data.json") {
+		const lines = existsSync(EVENTS) ? readFileSync(EVENTS, "utf8").split("\n") : [];
+		return Response.json(buildBoard(lines), { headers: { "cache-control": "no-store" } });
+	}
+	const file = FILES[path];
+	if (!file) return undefined;
+	return new Response(readFileSync(join(STATIC, file)), { headers: { "content-type": TYPES[file.split(".").pop() as string], "cache-control": "no-store" } });
+}
+
+// 开发时单独跑；平时看板挂在常驻服务里
 if (import.meta.main) {
 	const port = Number(process.argv[2] ?? 8768);
-	const server = Bun.serve({
-		hostname: "127.0.0.1",
-		port,
-		fetch(req) {
-			const path = new URL(req.url).pathname;
-			if (path === "/version") return new Response(existsSync(EVENTS) ? String(statSync(EVENTS).mtimeMs) : "0", { headers: { "cache-control": "no-store" } }); // 页面轮询它，任务表一变就重画
-			if (path === "/data.json") {
-				const lines = existsSync(EVENTS) ? readFileSync(EVENTS, "utf8").split("\n") : [];
-				return Response.json(buildBoard(lines), { headers: { "cache-control": "no-store" } });
-			}
-			const file = FILES[path];
-			if (!file) return new Response("not found", { status: 404 });
-			return new Response(readFileSync(join(STATIC, file)), { headers: { "content-type": TYPES[file.split(".").pop() as string], "cache-control": "no-store" } });
-		},
-	});
+	const server = Bun.serve({ hostname: "127.0.0.1", port, fetch: req => boardResponse(req) ?? new Response("not found", { status: 404 }) });
 	console.log(`任务看板：http://${server.hostname}:${server.port}/ （数据 ${EVENTS}）`);
 }

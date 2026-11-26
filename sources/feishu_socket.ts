@@ -231,13 +231,15 @@ async function supervise(feed: Feed): Promise<void> {
 	}
 }
 
-if (import.meta.main && feeds.length) {
-	const shutdown = () => {
-		stop.abort();
-		for (const feed of feeds) feed.child?.kill("SIGTERM");
-	};
-	process.on("SIGTERM", shutdown);
-	process.on("SIGINT", shutdown);
+// 停掉所有 lark-cli 子进程，让 runFeishuSocket 返回
+export function stopFeishuSocket(): void {
+	stop.abort();
+	for (const feed of feeds) feed.child?.kill("SIGTERM");
+}
+
+// 常驻服务（service.ts）和单独运行都从这里进；没有 bot 账号时立即返回
+export async function runFeishuSocket(): Promise<void> {
+	if (!feeds.length) return;
 	health();
 	const beat = setInterval(health, 30_000);
 	try {
@@ -245,4 +247,10 @@ if (import.meta.main && feeds.length) {
 	} finally {
 		clearInterval(beat);
 	}
+}
+
+if (import.meta.main) {
+	process.on("SIGTERM", stopFeishuSocket);
+	process.on("SIGINT", stopFeishuSocket);
+	await runFeishuSocket();
 }

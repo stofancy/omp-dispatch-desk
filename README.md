@@ -38,7 +38,7 @@
 7. 问「进展」：一个任务一行。想看某个负责 agent 在干什么、它下面派了谁：omp 的 Agent Hub（`Alt+A`）。
 8. 关掉终端，之后用 `omp -c` 或 `omp -r <会话>` 续上：还是调度器模式，负责 agent 都叫得醒。任务表全局只有一本，在哪个会话打开调度器模式看到的都是它；但负责 agent 属于派出它的那个会话。
 9. 关掉这个模式：`/调度 off`。
-10. 看全部任务的进度：在插件目录运行 `bun run board`（即 `bun scripts/board.ts`），浏览器打开 http://127.0.0.1:8768/ 。首屏是一句话概览和计数（等你、卡住、今天该催、待决定），往下是每个未关闭任务一张卡（负责 agent、按状态分色的进度条、等谁和催办日期、PR 链接）；点卡片看事项、审查记录、已定、时间线。页面只读，刷新即取最新任务表。
+10. 看全部任务的进度：看板挂在插件的常驻服务里（见 [docs/unified-service.md](docs/unified-service.md)），状态栏末尾显示地址，默认 http://127.0.0.1:8768/ ，端口被占时换成实际端口。首屏是一句话概览和计数（等你、卡住、今天该催、待决定），往下是每个未关闭任务一张卡（负责 agent、按状态分色的进度条、等谁和催办日期、PR 链接）；点卡片看事项、审查记录、已定、时间线。页面只读，刷新即取最新任务表。
 
 ## 插件做什么（只在打开了调度器模式的会话里）
 
@@ -105,7 +105,7 @@
 
 ## 安装
 
-准备好 `omp`、`bun`、`python3`、`gh` 和 `crontab`（轮询用到 `flock`）。读飞书还需要 `lark-cli`；实时推送使用 systemd 用户服务。
+准备好 `omp`、`bun`、`python3`、`gh` 和 `flock`。读飞书还需要 `lark-cli`；实时推送使用 systemd 用户服务。
 
 ```bash
 git clone https://github.com/stofancy/omp-dispatch-desk ~/src/omp-dispatch-desk
@@ -113,7 +113,7 @@ cd ~/src/omp-dispatch-desk
 bun scripts/install.ts
 ```
 
-安装程序在每次改动前显示内容并请你确认：链接插件、建立数据目录、配置分拣和消息源、安装轮询任务及实时服务。可重复运行；定时任务只替换安装程序标记的区块。已有手工添加的同名轮询任务需要自行移除，避免重复调度。先看预览可用 `bun scripts/install.ts --dry-run`，它按现有配置生成计划，不写任何文件。
+安装程序在每次改动前显示内容并请你确认：链接插件、建立数据目录、配置分拣和消息源、安装统一常驻服务 `dispatch-desk.service`（看板、实时推送、定时补读都在里面），并移除旧的单独推送服务和 crontab 里插件自己的补读条目（先备份，其他条目不动）。可重复运行。先看预览可用 `bun scripts/install.ts --dry-run`，它按现有配置生成计划，不写任何文件。
 
 在 omp 内用 `/调度配置`（别名 `/dispatch-setting`）也能改分拣、飞书和 Slack。保存后如需部署消息源或使常驻服务载入新配置，再运行安装程序；它使用与 omp 相同的 `DISPATCH_DESK_HOME`。改了 `src/` 或 `prompts/`，重启会话（`omp -c`）后生效，固定区会提示重启。
 
@@ -138,16 +138,17 @@ bun scripts/install.ts
 | `config.json` | `rules` 段是规则参数；其余是外部消息源的配置，见 `config.example.json` |
 | `config.json.bak.<时间戳>` | 配置向导覆盖旧配置之前的备份 |
 | `crontab.bak.<时间戳>`、`dispatch-desk-*.service.bak.<时间戳>` | 安装程序改动前备份的 crontab 和被替换或移除的用户服务文件 |
-| `logs/<源>_poll.log` | 安装程序装的定时轮询的输出（写入条数、错误）；常驻服务的输出在 `journalctl --user -u dispatch-desk-*` |
+| `logs/<源>.log`、`logs/<源>.lock` | 常驻服务跑的定时补读的输出和锁；服务自己的输出在 `journalctl --user -u dispatch-desk` |
+| `state/service.json` | 常驻服务的 pid 和看板实际端口 |
 
-从旧版升级：运行 `bun scripts/migrate-single-tasktable.ts [数据目录]`，把旧的分账本合并成这一本任务表，旧数据移到 `archive/<时间戳>/`。可重复运行，已迁移过就什么都不做。消息源的定时任务改成每 5 分钟（见 `deploy/crontab.example`）：程序按 5 分钟一个周期判断它们是否正常，还按旧间隔跑的会被误报成没在工作。
+从旧版升级：运行 `bun scripts/migrate-single-tasktable.ts [数据目录]`，把旧的分账本合并成这一本任务表，旧数据移到 `archive/<时间戳>/`。可重复运行，已迁移过就什么都不做。定时补读每 5 分钟一次，由常驻服务跑。
 
 从 omp-chengxiangfu 升级（这个插件改名前叫丞相府）：
 
 1. 停掉旧的 Slack 推送服务：`systemctl --user disable --now chengxiangfu-slack.service`，删掉它的 unit 文件。
 2. 挪数据目录：`mv ~/.local/share/chengxiangfu ~/.local/share/dispatch-desk`。设过 `CHENGXIANGFU_HOME` 的，改成 `DISPATCH_DESK_HOME`。
 3. 换插件链接：`omp plugin uninstall omp-chengxiangfu`（只删链接，不动仓库），把仓库的 remote 改成 `https://github.com/stofancy/omp-dispatch-desk` 并拉最新代码，再 `omp plugin link <仓库路径>`。
-4. 用 `bun scripts/install.ts` 重装推送服务和定时任务。
+4. 用 `bun scripts/install.ts` 重装常驻服务。
 5. 重启 omp 会话（`omp -c`）。哪些会话开着调度器模式记在数据目录里，挪过去后照旧。
 
 ## 外部消息
@@ -164,14 +165,14 @@ bun scripts/install.ts
 - 文件名 `<19 位排序数字>-<source>-<去重键>.json`；先写临时文件再改名，避免读到半个文件。
 - 送的时机分两档：`urgent: true`（私信、@你、到期提醒）和与未完成任务相关的马上送（见 `inbox_quiet_seconds`、`inbox_max_seconds`）；其余攒着，跟下一次马上送的或你下次发话一起送，最晚 `inbox_digest_minutes`。bot 发的私信和群私信、分拣判无关的由消息源丢掉，只记日志。
 
-`sources/` 里有几个现成的消息源，都只读外部系统，和插件分开部署：
+`sources/` 里有几个现成的消息源，都只读外部系统，由常驻服务 `sources/service.ts` 统一跑：
 
 | 文件 | 做什么 | 怎么跑 |
 |---|---|---|
-| `slack_socket.ts` | Slack 实时推送（Socket Mode）：配置里关注的频道、未完成任务登记要盯的频道和 thread、发给你的私信、@ 你的消息。配了分拣时，没归到任务的频道里不紧急的消息留给定时补读去分拣。每 30 秒发一次心跳，90 秒没回音就重连（切 VPN、机器休眠后连接会悄悄死掉） | 常驻，见 `deploy/dispatch-desk-slack.service` |
-| `slack_poll.py` | 给实时推送兜底，补读配置里关注的频道，和未完成任务登记要盯的频道、私信、thread；配了分拣时，没归到任务的频道里不紧急的消息先分拣（见下） | 每 5 分钟，见 `deploy/crontab.example` |
-| `feishu_socket.ts` | 飞书机器人长连接：收使用者指令和任务登记的群消息 | 常驻，见 `deploy/dispatch-desk-feishu.service` |
-| `feishu_poll.py` | 用 user 身份补读私聊、点名 @你和任务登记且可访问的会话 | 每 5 分钟，见 `deploy/crontab.example` |
+| `slack_socket.ts` | Slack 实时推送（Socket Mode）：配置里关注的频道、未完成任务登记要盯的频道和 thread、发给你的私信、@ 你的消息。配了分拣时，没归到任务的频道里不紧急的消息留给定时补读去分拣。每 30 秒发一次心跳，90 秒没回音就重连（切 VPN、机器休眠后连接会悄悄死掉） | 常驻 |
+| `slack_poll.py` | 给实时推送兜底，补读配置里关注的频道，和未完成任务登记要盯的频道、私信、thread；配了分拣时，没归到任务的频道里不紧急的消息先分拣（见下） | 每 5 分钟 |
+| `feishu_socket.ts` | 飞书机器人长连接：收使用者指令和任务登记的群消息 | 常驻 |
+| `feishu_poll.py` | 用 user 身份补读私聊、点名 @你和任务登记且可访问的会话 | 每 5 分钟 |
 | `pr_poll.py` | 你开着的 PR、未完成任务登记要盯的 PR（别人开的也算）有新评论、review、投票（GitHub 走 `gh`，Azure DevOps 走 `az`） | 每 5 分钟 |
 | `reminders_poll.py` | 提醒文件里到期的条目，每天一次。`due` 写日期（当天第一次检查就提醒）或带时刻（`2026-11-18 16:30`，本机时间，到点后的第一次检查提醒，最多晚一个周期）。写错的条目（缺字段等）只跳过那一条，并报成故障 | 每 5 分钟 |
 

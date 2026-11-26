@@ -10,7 +10,7 @@ export interface Secret { file: string; json_key?: string }
 export interface SlackConfig { domain: string; me: string; user_token: Secret; app_token: Secret; channels: Record<string, { name: string; line?: string }> }
 export interface FeishuAccount { profile: string; bot: boolean; poll: boolean }
 export interface FeishuConfig { accounts: FeishuAccount[] }
-export interface Config { slack?: SlackConfig; feishu?: FeishuConfig; triage?: { about?: string; model?: string; command?: string } }
+export interface Config { slack?: SlackConfig; feishu?: FeishuConfig; triage?: { about?: string; model?: string; command?: string }; reminders?: { file?: string } }
 
 export const config: Config = JSON.parse(readFileSync(join(HOME, "config.json"), "utf8"));
 

@@ -6,12 +6,11 @@ import { createInterface, type Interface } from "node:readline/promises";
 import { HOME, PLUGIN_ROOT } from "../src/paths";
 import { hasFeishu, readConfig, runSetup, type SetupUI } from "../src/setup";
 import { writeAtomic } from "../src/table";
+import { DEFAULT_PORT, isOldBoard, isOldUnit, listenerPid, withoutPluginCron } from "./deploy";
 
 const DRY = process.argv.includes("--dry-run");
 const ROOT = realpathSync(PLUGIN_ROOT);
 const DATA = resolve(HOME);
-const CRON_START = "# BEGIN omp-dispatch-desk";
-const CRON_END = "# END omp-dispatch-desk";
 const UNIT_MARKER = "# 由 omp-dispatch-desk 安装程序管理\n";
 
 function run(command: string, args: string[] = [], input?: string) {
@@ -91,59 +90,62 @@ async function install(rl?: Interface) {
 	if (hasFeishu(config) && !lark && !DRY) throw new Error("飞书已配置，请先安装 lark-cli 再部署。");
 	const cronPaths = [dirname(omp), dirname(gh), dirname(python3), ...(lark ? [dirname(lark)] : []), "/usr/local/bin", "/usr/bin", "/bin"];
 	const path = [...new Set(cronPaths)].join(":");
-	const pollers = ["pr", ...(config.reminders ? ["reminders"] : []), ...(config.slack ? ["slack"] : []), ...(config.feishu?.accounts?.some(a => a.poll) ? ["feishu"] : [])];
-	const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-	// cron 不保留输出：每个轮询追加到数据目录 logs/ 下自己的日志，出错时有处可查
-	const logs = join(DATA, "logs");
-	const jobs = pollers.map(p => `*/5 * * * * cd ${shellQuote(join(ROOT, "sources"))} && PATH=${shellQuote(path)} DISPATCH_DESK_HOME=${shellQuote(DATA)} flock -n /tmp/dispatch-desk-${p}.lock python3 ${p}_poll.py >> ${shellQuote(join(logs, `${p}_poll.log`))} 2>&1`.replace(/%/g, "\\%"));
-	const block = [CRON_START, ...jobs, CRON_END].join("\n");
+	const units = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "systemd", "user");
+	const unitQuote = (value: string) => JSON.stringify(value.replace(/%/g, "%%"));
+
+	// 1. 统一常驻服务：看板、实时推送、定时补读都在 dispatch-desk.service 里
+	const name = "dispatch-desk.service";
+	const file = join(units, name);
+	const oldUnit = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+	const unit = UNIT_MARKER + readFileSync(join(ROOT, "deploy", name), "utf8")
+		.replace(/^(?:#[^\n]*\n)+/, "")
+		.replace(/^\[Service\]$/m, () => `[Service]\nEnvironment=${unitQuote(`DISPATCH_DESK_HOME=${DATA}`)}\nEnvironment=${unitQuote(`PATH=${path}`)}`)
+		.replace(/^ExecStart=<bun> <repo>\/(\S+)/m, (_full: string, script: string) => `ExecStart=${unitQuote(bun)} ${unitQuote(join(ROOT, script))}`);
+
+	// 看板端口被手动起的旧看板占着：问过才结束它，不答或答否就不动，服务自己换端口
+	const ss = run("ss", ["-ltnpH"]);
+	const holder = ss.status === 0 ? listenerPid(ss.stdout, DEFAULT_PORT) : undefined;
+	if (holder && isOldBoard(holder)) {
+		if (await ask("结束旧看板", `进程 ${holder}（bun scripts/board.ts）占着 ${DEFAULT_PORT}。结束它，让常驻服务用 ${DEFAULT_PORT}？不结束的话服务换到下一个空端口，状态栏显示实际端口。`)) process.kill(holder, "SIGTERM");
+	} else if (holder) console.log(`端口 ${DEFAULT_PORT} 被进程 ${holder} 占着（不是旧看板）：常驻服务会自己换端口。`);
+
+	const backupInfo = oldUnit !== undefined && oldUnit !== unit ? `先备份旧文件到 ${join(DATA, `${name}.bak.${stamp}`)}。` : "";
+	if (await ask("部署统一常驻服务", `${file}。${backupInfo}启用并重启 ${name}：\n${unit.trimEnd()}`)) {
+		if (oldUnit !== unit) {
+			if (oldUnit !== undefined) writeFileSync(join(DATA, `${name}.bak.${stamp}`), oldUnit, { mode: 0o600, flag: "wx" });
+			mkdirSync(units, { recursive: true });
+			writeAtomic(file, unit);
+			checked("systemctl", ["--user", "daemon-reload"]);
+		}
+		checked("systemctl", ["--user", "enable", name]);
+		checked("systemctl", ["--user", "restart", name]);
+	}
+
+	// 2. 旧的单独推送服务：并进统一服务后停用、删除（先备份）
+	for (const old of ["dispatch-desk-slack.service", "dispatch-desk-feishu.service"]) {
+		const oldFile = join(units, old);
+		const text = existsSync(oldFile) ? readFileSync(oldFile, "utf8") : undefined;
+		if (!text || !isOldUnit(text)) continue;
+		const backup = join(DATA, `${old}.bak.${stamp}`);
+		if (await ask("移除旧的推送服务", `已并进 ${name}。备份 ${oldFile} 到 ${backup}，停用并删除。`)) {
+			writeFileSync(backup, text, { mode: 0o600, flag: "wx" });
+			checked("systemctl", ["--user", "disable", "--now", old]);
+			rmSync(oldFile);
+			checked("systemctl", ["--user", "daemon-reload"]);
+		}
+	}
+
+	// 3. 定时补读改由常驻服务跑：只删插件自己的 crontab 条目，其余原样保留
 	const crontab = run("crontab", ["-l"]);
 	if (crontab.error) throw crontab.error;
 	if (crontab.status !== 0 && !crontab.stderr.includes("no crontab for")) throw new Error(crontab.stderr.trim());
 	const oldCron = crontab.status === 0 ? crontab.stdout : "";
-	const currentBlock = /^# BEGIN omp-dispatch-desk\n[\s\S]*?^# END omp-dispatch-desk$/m;
-	const newCron = currentBlock.test(oldCron) ? oldCron.replace(currentBlock, () => block) : `${oldCron}${oldCron && !oldCron.endsWith("\n") ? "\n" : ""}${block}\n`;
+	const { crontab: newCron, removed } = withoutPluginCron(oldCron);
 	const backup = join(DATA, `crontab.bak.${stamp}`);
-	if (oldCron === newCron) console.log(`crontab 块已是最新：\n${block}`);
-	else if (await ask("更新 crontab", `备份当前内容到 ${backup}，仅写入下列管理块：\n${block}`)) {
+	if (!removed.length) console.log("crontab 里没有插件的定时补读，跳过。");
+	else if (await ask("移除 crontab 里的定时补读", `改由常驻服务跑。备份当前内容到 ${backup}，只删下列行，其余不动：\n${removed.join("\n")}`)) {
 		writeFileSync(backup, oldCron, { mode: 0o600, flag: "wx" });
-		mkdirSync(logs, { recursive: true });
 		checked("crontab", ["-"], newCron);
-	}
-
-	const units = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "systemd", "user");
-	const enabled = { slack: !!config.slack, feishu: !!config.feishu?.accounts?.some(a => a.bot) };
-	for (const [source, active] of Object.entries(enabled)) {
-		const name = `dispatch-desk-${source}.service`;
-		const file = join(units, name);
-		const oldUnit = existsSync(file) ? readFileSync(file, "utf8") : undefined;
-		const backup = join(DATA, `${name}.bak.${stamp}`);
-		if (!active) {
-			if (oldUnit?.startsWith(UNIT_MARKER) && await ask("移除 systemd 用户服务", `备份 ${file} 到 ${backup}，停用并删除服务。`)) {
-				writeFileSync(backup, oldUnit, { mode: 0o600, flag: "wx" });
-				checked("systemctl", ["--user", "disable", "--now", name]);
-				rmSync(file);
-				checked("systemctl", ["--user", "daemon-reload"]);
-			}
-			continue;
-		}
-		const unitQuote = (value: string) => JSON.stringify(value.replace(/%/g, "%%"));
-		const unit = UNIT_MARKER + readFileSync(join(ROOT, "deploy", name), "utf8")
-			.replace(/^(?:#[^\n]*\n)+/, "")
-			.replace(/^\[Service\]$/m, () => `[Service]\nEnvironment=${unitQuote(`DISPATCH_DESK_HOME=${DATA}`)}`)
-			.replace(/^Environment=PATH=<lark-cli-bin-dir>.*$/m, () => `Environment=${unitQuote(`PATH=${path}`)}`)
-			.replace(/^ExecStart=<bun> <repo>\/(\S+)/m, (_full: string, script: string) => `ExecStart=${unitQuote(bun)} ${unitQuote(join(ROOT, script))}`);
-		const backupInfo = oldUnit !== undefined && oldUnit !== unit ? `先备份旧文件到 ${backup}。` : "";
-		if (await ask("部署 systemd 用户服务", `${file}。${backupInfo}启用并重启 ${name}：\n${unit.trimEnd()}`)) {
-			if (oldUnit !== unit) {
-				if (oldUnit !== undefined) writeFileSync(backup, oldUnit, { mode: 0o600, flag: "wx" });
-				mkdirSync(units, { recursive: true });
-				writeAtomic(file, unit);
-				checked("systemctl", ["--user", "daemon-reload"]);
-			}
-			checked("systemctl", ["--user", "enable", name]);
-			checked("systemctl", ["--user", "restart", name]);
-		}
 	}
 	if (DRY) console.log("预览结束，未改动插件、配置、crontab 或 systemd。");
 }

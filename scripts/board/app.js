@@ -19,25 +19,35 @@ function bar(t) {
 }
 const legend = `<div class="legend">${KINDS.map(([k, n]) => `<span><i class="k-${k}"></i>${n}</span>`).join("")}</div>`;
 
+const verdict = r => (r ? `<span class="${r.verdict === "pass" ? "ok" : "bad"}">${r.verdict === "pass" ? "通过" : "不通过"}</span> <span class="muted">${esc(r.by)} ${when(r.at)}</span>` : "");
+
 function itemTable(items, today, withTask) {
   if (!items.length) return `<p class="muted">（无）</p>`;
-  const head = `${withTask ? "<th>任务</th>" : ""}<th>#</th><th>事项</th><th>状态</th><th>下一步</th><th>催办</th><th>PR</th>`;
-  const rows = items.map(i => `<tr>${withTask ? `<td><a href="#/t/${encodeURIComponent(i.task)}">${esc(i.task)}</a></td>` : ""}<td class="mono">${esc(i.id)}</td><td>${esc(i.title)}</td><td>${st(i)}</td><td>${esc(i.next)}</td><td class="mono">${chase(i.chase, today)}</td><td>${link(i.pr)}</td></tr>`).join("");
+  const head = `${withTask ? "<th>任务</th>" : ""}<th>#</th><th>事项</th><th>状态</th><th>下一步</th><th>催办</th><th>PR</th>${withTask ? "" : "<th>审查</th>"}`;
+  const rows = items.map(i => `<tr>${withTask ? `<td><a href="#/t/${encodeURIComponent(i.task)}">${esc(i.task)}</a></td>` : ""}<td class="mono">${esc(i.id)}</td><td>${esc(i.title)}</td><td>${st(i)}</td><td>${esc(i.next)}</td><td class="mono">${chase(i.chase, today)}</td><td>${link(i.pr)}</td>${withTask ? "" : `<td>${verdict(i.review)}</td>`}</tr>`).join("");
   return `<div class="card flat"><table class="t"><tr>${head}</tr>${rows}</table></div>`;
+}
+
+function reviewBlock(title, r) {
+  return `<div class="card flat" style="margin-bottom:12px"><h3>${esc(title)}：${verdict(r)}</h3><p class="kicker">核对过的</p><p style="white-space:pre-wrap">${esc(r.evidence || "（没写）")}</p>${r.findings ? `<p class="kicker">发现</p><p style="white-space:pre-wrap">${esc(r.findings)}</p>` : ""}</div>`;
 }
 
 function home(d) {
   const s = d.summary;
   const stat = (n, label, hot) => `<div class="stat${hot && n ? " hot" : ""}"><b>${n}</b><span>${label}</span></div>`;
   const cards = d.tasks.map(t => {
-    const open = t.items.length - t.progress.closed;
-    const waits = t.items.filter(i => i.kind === "waiting").map(i => i.status).filter((v, i, a) => a.indexOf(v) === i);
-    return `<a class="card tcard" href="#/t/${encodeURIComponent(t.name)}">
-      <h3><span class="name">${esc(t.name)} · ${esc(t.agent || "无负责 agent")}</span>${esc(t.title || t.name)}</h3>
+    const open = t.items.filter(i => i.kind !== "done" && i.kind !== "cancelled");
+    const href = `#/t/${encodeURIComponent(t.name)}`;
+    const prs = [...new Set(t.items.map(i => i.pr).filter(Boolean))];
+    const tracked = open.filter(i => i.kind === "waiting" || i.kind === "you" || i.kind === "blocked" || i.chase)
+      .sort((a, b) => (a.chase ?? "9999").localeCompare(b.chase ?? "9999"));
+    return `<div class="card tcard">
+      <h3><span class="name">${esc(t.name)} · ${esc(t.agent || "无负责 agent")}</span><a href="${href}">${esc(t.title || t.name)}</a></h3>
       ${bar(t)}
-      <div class="meta">事项 ${t.progress.closed}/${t.items.length} 已关闭 · 未关闭 ${open}${t.counts.you ? ` · <b class="bad">等你 ${t.counts.you}</b>` : ""}${t.counts.blocked ? ` · <b class="bad">卡住 ${t.counts.blocked}</b>` : ""}${t.chaseDue ? ` · <span class="due">到期催办 ${t.chaseDue}</span>` : ""}${t.asks.length ? ` · 待决定 #${t.asks.join(" #")}` : ""}</div>
-      ${waits.length ? `<div class="meta">${waits.map(esc).join("；")}</div>` : ""}
-      <div class="meta muted">最近更新 ${when(t.updated)}</div></a>`;
+      <div class="meta">事项 ${t.progress.closed}/${t.items.length} 已关闭 · 未关闭 ${open.length}${t.counts.you ? ` · <b class="bad">等你 ${t.counts.you}</b>` : ""}${t.counts.blocked ? ` · <b class="bad">卡住 ${t.counts.blocked}</b>` : ""}${t.chaseDue ? ` · <span class="due">到期催办 ${t.chaseDue}</span>` : ""}${t.asks.length ? ` · 待决定 #${t.asks.join(" #")}` : ""}</div>
+      ${tracked.length ? `<ul class="tl">${tracked.map(i => `<li><span class="mono">${esc(i.id)}</span> ${st(i)}${i.chase ? ` · 催办 <span class="mono">${chase(i.chase, d.today)}</span>` : ""}${i.pr ? ` · ${link(i.pr)}` : ""}</li>`).join("")}</ul>` : ""}
+      ${prs.length ? `<div class="meta">PR：${prs.map(link).join(" · ")}</div>` : ""}
+      <div class="meta muted">最近更新 ${when(t.updated)} · <a href="${href}">详情 →</a></div></div>`;
   }).join("");
   return `<p class="kicker">一句话</p>
     <h1 class="pg-title">${s.tasks} 个任务在跑，${s.you} 项等你，${s.chaseDue} 项今天该催，${s.asks} 个问题待决定</h1>
@@ -80,6 +90,8 @@ function detail(d, name) {
     ${t.watch.length ? `<h3>盯的外部输入</h3><ul>${t.watch.map(w => `<li>${link(w)}</li>`).join("")}</ul>` : ""}</div>
     <div class="sec"><h2>未关闭事项</h2><span class="kicker">${open.length} 项</span></div>${itemTable(open, d.today)}
     <details class="done" style="margin-top:14px"><summary>已关闭事项 ${closed.length} 项</summary>${itemTable(closed, d.today)}</details>
+    <div class="sec"><h2>审查记录</h2><span class="kicker">每项只留最近一次</span></div>
+    ${t.review ? reviewBlock("整个任务", t.review) : ""}${t.items.filter(i => i.review).map(i => reviewBlock(`${i.id} ${i.title}`, i.review)).join("") || (t.review ? "" : `<p class="muted">（无）</p>`)}
     <div class="sec"><h2>已定</h2><span class="kicker">${t.decisions.length} 条</span></div>
     <ul class="tl card flat">${t.decisions.map(x => `<li><span class="when">${esc(x.date)}</span>${esc(x.text)}</li>`).join("") || "<li>（无）</li>"}</ul>
     <div class="sec"><h2>时间线</h2><span class="kicker">最近 ${t.timeline.length} 条</span></div>

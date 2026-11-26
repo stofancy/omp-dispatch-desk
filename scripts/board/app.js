@@ -178,12 +178,14 @@ document.addEventListener("click", e => {
 });
 window.addEventListener("hashchange", () => render(false));
 
-// 任务表一变就重画，保留滚动位置
-let version;
+// 任务表一变就重画，保留滚动位置。初始版本在页面加载时先取，头一个轮询周期内的改动也能发现
+const currentVersion = async () => (await fetch("version", { cache: "no-store" })).text();
+let version = currentVersion().catch(() => undefined);
 setInterval(async () => {
   try {
-    const v = await (await fetch("version", { cache: "no-store" })).text();
-    if (version !== undefined && v !== version) render(true);
+    const v = await currentVersion();
+    const old = await version;
+    if (old !== undefined && v !== old) render(true);
     version = v;
   } catch {}
 }, 5000);

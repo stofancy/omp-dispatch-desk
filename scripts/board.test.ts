@@ -41,3 +41,23 @@ test("看板：只列未关闭任务，进度和到期催办按事项算，日�
 	expect(d.summary).toMatchObject({ tasks: 1, items: 3, you: 1, waiting: 1, chaseDue: 1, asks: 1 });
 	expect(d.attention.map(i => `${i.task}/${i.id}`).sort()).toEqual(["PROJ-1/T2", "PROJ-1/T3"]);
 });
+
+test("结构化 state 优先于自由文本；等谁从 waiting_on 取，旧数据从括号里取；需要整理列出原因", () => {
+	expect(kindOf("随便写的", "等别人")).toBe("waiting");
+	const d = buildBoard(
+		[
+			ev("task", "PROJ-3", { title: "x", agent: "Proj3", done_when: "x" }),
+			ev("item", "PROJ-3", { id: "T1", title: "等审", state: "等别人", status: "等别人", waiting_on: "Bo", chase: "2026-11-19", by: "Proj3" }),
+			ev("item", "PROJ-3", { id: "T2", title: "老写法", status: "等别人（Carlos）" }),
+			ev("item", "PROJ-3", { id: "T2", next: "再看" }),
+		],
+		"2026-11-21",
+	);
+	const t = d.tasks.find(x => x.name === "PROJ-3");
+	expect(t?.items.map(i => [i.id, i.waitingOn, i.by ?? ""])).toEqual([["T1", "Bo", "Proj3"], ["T2", "Carlos", ""]]);
+	expect(t?.history.T2.length).toBe(2);
+	const reasons = Object.fromEntries(d.tidy.map(i => [i.id, i.reasons.join("；")]));
+	expect(reasons.T1).toContain("催办已过（2026-11-19）");
+	expect(reasons.T1).toContain("天没更新");
+	expect(reasons.T2).toContain("等别人但没写催办日期");
+});

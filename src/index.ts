@@ -24,7 +24,7 @@ import { checkReply, feedback, renderRules, settings } from "./rules";
 import { createScreen, messageRow, readReviewing } from "./screen";
 import { hasFeishu, readConfig, runSetup } from "./setup";
 import { OFF_MESSAGE, isOn, setOn } from "./switch";
-import { type Ev, GENERAL, type Table, agentTaken, append, doneBlocker, isReviewerName, logError, needsReview, openTasks, readTable, taskOfAgent, taskOfReviewer, today } from "./table";
+import { type Ev, GENERAL, STATES, type Table, agentTaken, append, doneBlocker, isReviewerName, logError, needsReview, openTasks, readTable, taskOfAgent, taskOfReviewer, today } from "./table";
 import { type Tier, due, tierOf } from "./tiers";
 import { type InboxFile, formatEvent } from "./excerpt";
 import { decidedFor, renderViews, since, snapshot, taskCard } from "./views";
@@ -55,7 +55,8 @@ interface Ctx {
 		rerenderMessage?(timestamp: number): void;
 	};
 }
-interface UpdateParams { task?: string; id: string; title?: string; status?: string; next?: string; chase?: string; pr?: string; source?: string }
+interface UpdateParams { task?: string; id: string; title?: string; state?: (typeof STATES)[number]; waiting_on?: string; status?: string; next?: string; chase?: string; pr?: string; source?: string }
+const NEXT_MAX = 120; // 下一步只写一步；历史和证据放 source
 interface AskParams { action: "open" | "close" | "decide"; task?: string; text?: string; checked?: string; n?: number; outcome?: string }
 interface ReviewParams { task: string; item?: string; verdict: "pass" | "fail"; evidence: string; findings?: string }
 interface TaskParams { task: string; agent?: string; title?: string; goal?: string; done_when?: string; watch_add?: string[]; watch_remove?: string[]; status?: string }
@@ -652,13 +653,15 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 	const updateTool = {
 		name: "tasktable_update",
 		label: "Task table update",
-		description: "Create or update one item (a step or sub-piece of work) inside a task. Call it whenever an item's status, next step, chase date or PR changes. Only the fields you pass are changed.",
+		description: "Create or update one item (a step or sub-piece of work) inside a task. Call it whenever an item's state, next step, chase date or PR changes. Only the fields you pass are changed. state 等别人 needs waiting_on and chase.",
 		parameters: z.object({
 			task: z.string().optional().describe(`Task name; use ${GENERAL} for things outside any task.`),
 			id: z.string().describe("Item id inside the task, e.g. T6. A new id creates an item."),
 			title: z.string().optional().describe("Short item name the operator understands (no codes)."),
-			status: z.string().optional().describe("e.g. 进行中 / 等你 / 等别人（某某） / 完成"),
-			next: z.string().optional().describe("Next step, and for waiting items where the reply will come from."),
+			state: z.enum(STATES).optional().describe("Structured state of the item."),
+			waiting_on: z.string().optional().describe("Who the item waits on (a person or team), and where the reply will come from. Required with state 等别人."),
+			status: z.string().optional().describe("Optional short free-text note on the state, e.g. 待 Carlos 审 ADR-0033. Defaults to state."),
+			next: z.string().optional().describe(`The one next step, at most ${NEXT_MAX} characters; history and evidence go in source.`),
 			chase: z.string().optional().describe("Chase date YYYY-MM-DD for waiting items."),
 			pr: z.string().optional().describe("PR link once one exists."),
 			source: z.string().optional().describe("Evidence link or place."),
@@ -666,8 +669,14 @@ export default function (pi: ExtensionAPI, lark: Lark = runLark): void {
 		async execute(_id: string, p: UpdateParams, _signal: unknown, _onUpdate: unknown, ctx: Ctx) {
 			const s = sidOf(ctx);
 			const line = taskOr(p.task);
+			if (p.next && p.next.length > NEXT_MAX) throw new Error(`next is ${p.next.length} characters; keep it to one step within ${NEXT_MAX}, put history and evidence in source`);
+			if (p.state === "等别人") {
+				const old = readTable().items.get(line)?.get(p.id);
+				if (!(p.waiting_on ?? old?.waiting_on)?.trim()) throw new Error("state 等别人 needs waiting_on: who, and where the reply will come from");
+				if (!(p.chase ?? old?.chase)?.trim()) throw new Error("state 等别人 needs chase: a YYYY-MM-DD date to check again");
+			}
 			const { task: _task, ...fields } = p;
-			record({ sid: s, kind: "item", line, ...fields });
+			record({ sid: s, kind: "item", line, ...fields, by: isMain(ctx) ? "main" : (ctx.agent?.id ?? "subagent") });
 			return { content: [{ type: "text", text: `recorded ${line}/${p.id}` }] };
 		},
 	};

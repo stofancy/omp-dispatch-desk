@@ -106,3 +106,12 @@ table.t tr:last-child td{border-bottom:0}
 details.done summary{cursor:pointer;font-weight:600}
 .err{color:var(--red);font-weight:700}
 .card.flat{overflow-x:auto}
+/* 一屏摘要：截图用，固定宽度、隐去顶栏 */
+body.shotmode .top{display:none}
+body.shotmode .page{max-width:1000px;padding-top:24px}
+.shot{width:960px}
+.shot .pg-title{font-size:30px}
+pre#share{white-space:pre-wrap;font:13px/1.6 var(--mono)}
+details.hist{margin:6px 0}
+.shot table.t{table-layout:fixed;word-break:break-word}
+.shot table.t td:nth-child(1){width:22%}.shot table.t td:nth-child(2){width:26%}.shot table.t td:nth-child(4){width:12%}

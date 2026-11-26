@@ -124,3 +124,13 @@ test("哪些状态要先有通过的审查：完成类的要，取消和进行�
 	expect(["完成", "done", "已完成", "merged"].map(needsReview)).toEqual([true, true, true, true]);
 	expect(["取消", "cancelled", "进行中", ""].map(needsReview)).toEqual([false, false, false, false]);
 });
+
+test("事项的 state、waiting_on、by 折叠进事项；只给 state 时 status 跟着变", () => {
+	const l = foldEvents([
+		ev("item", "PROJ-9", { id: "T1", title: "等审", status: "进行中" }),
+		ev("item", "PROJ-9", { id: "T1", state: "完成", by: "Proj9" }),
+		ev("item", "PROJ-9", { id: "T2", state: "等别人", status: "待 Bo 审 ADR", waiting_on: "Bo" }),
+	]);
+	expect(l.items.get("PROJ-9")?.get("T1")).toMatchObject({ state: "完成", status: "完成", by: "Proj9" });
+	expect(l.items.get("PROJ-9")?.get("T2")).toMatchObject({ state: "等别人", status: "待 Bo 审 ADR", waiting_on: "Bo" });
+});

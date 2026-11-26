@@ -8,7 +8,8 @@ export const GENERAL = "日常"; // 不属于任何任务的事
 
 export type Ev = { ts: string; sid: string; kind: string; line?: string; [k: string]: unknown };
 export interface Review { verdict: "pass" | "fail"; by: string; at: string; evidence: string; findings: string }
-export interface Item { line: string; id: string; title: string; status: string; next?: string; chase?: string; pr?: string; source?: string; updated: string; review?: Review }
+export const STATES = ["进行中", "等你", "等别人", "卡住", "待审查", "完成", "取消"] as const; // 事项的结构化状态；status 留作补充说明
+export interface Item { line: string; id: string; title: string; status: string; state?: string; waiting_on?: string; next?: string; chase?: string; pr?: string; source?: string; by?: string; updated: string; review?: Review }
 export interface Ask { n: number; line: string; text: string; opened: string }
 export interface Correction extends Ask { rule?: string; ask?: number } // ask：规则提议登记成的那个提问的编号
 export interface Task {
@@ -111,10 +112,11 @@ function fold(l: Table, ev: Ev): void {
 			if (!byTask) l.items.set(line, (byTask = new Map()));
 			const next: Item = { ...(byTask.get(id) ?? { line, id, title: id, status: "" }), updated: ev.ts };
 			const wasDone = isDone(next.status);
-			for (const f of ["title", "status", "next", "chase", "pr", "source"] as const) {
+			for (const f of ["title", "status", "state", "waiting_on", "next", "chase", "pr", "source", "by"] as const) {
 				const v = ev[f];
 				if (typeof v === "string") next[f] = v;
 			}
+			if (typeof ev.state === "string" && typeof ev.status !== "string") next.status = ev.state; // 只给了 state：status 跟着变，isDone 等老逻辑照常工作
 			if (wasDone && !isDone(next.status)) next.review = undefined; // 重新打开的事项：之前的审查不算数
 			byTask.set(id, next);
 			break;

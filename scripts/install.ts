@@ -94,10 +94,10 @@ async function install(rl?: Interface) {
 	const unitQuote = (value: string) => JSON.stringify(value.replace(/%/g, "%%"));
 
 	// 1. 统一常驻服务：看板、实时推送、定时补读都在 dispatch-desk.service 里
-	const name = "dispatch-desk.service";
-	const file = join(units, name);
+	const service = "dispatch-desk.service";
+	const file = join(units, service);
 	const oldUnit = existsSync(file) ? readFileSync(file, "utf8") : undefined;
-	const unit = UNIT_MARKER + readFileSync(join(ROOT, "deploy", name), "utf8")
+	const unit = UNIT_MARKER + readFileSync(join(ROOT, "deploy", service), "utf8")
 		.replace(/^(?:#[^\n]*\n)+/, "")
 		.replace(/^\[Service\]$/m, () => `[Service]\nEnvironment=${unitQuote(`DISPATCH_DESK_HOME=${DATA}`)}\nEnvironment=${unitQuote(`PATH=${path}`)}`)
 		.replace(/^ExecStart=<bun> <repo>\/(\S+)/m, (_full: string, script: string) => `ExecStart=${unitQuote(bun)} ${unitQuote(join(ROOT, script))}`);
@@ -109,16 +109,16 @@ async function install(rl?: Interface) {
 		if (await ask("结束旧看板", `进程 ${holder}（bun scripts/board.ts）占着 ${DEFAULT_PORT}。结束它，让常驻服务用 ${DEFAULT_PORT}？不结束的话服务换到下一个空端口，状态栏显示实际端口。`)) process.kill(holder, "SIGTERM");
 	} else if (holder) console.log(`端口 ${DEFAULT_PORT} 被进程 ${holder} 占着（不是旧看板）：常驻服务会自己换端口。`);
 
-	const backupInfo = oldUnit !== undefined && oldUnit !== unit ? `先备份旧文件到 ${join(DATA, `${name}.bak.${stamp}`)}。` : "";
-	if (await ask("部署统一常驻服务", `${file}。${backupInfo}启用并重启 ${name}：\n${unit.trimEnd()}`)) {
+	const backupInfo = oldUnit !== undefined && oldUnit !== unit ? `先备份旧文件到 ${join(DATA, `${service}.bak.${stamp}`)}。` : "";
+	if (await ask("部署统一常驻服务", `${file}。${backupInfo}启用并重启 ${service}：\n${unit.trimEnd()}`)) {
 		if (oldUnit !== unit) {
-			if (oldUnit !== undefined) writeFileSync(join(DATA, `${name}.bak.${stamp}`), oldUnit, { mode: 0o600, flag: "wx" });
+			if (oldUnit !== undefined) writeFileSync(join(DATA, `${service}.bak.${stamp}`), oldUnit, { mode: 0o600, flag: "wx" });
 			mkdirSync(units, { recursive: true });
 			writeAtomic(file, unit);
 			checked("systemctl", ["--user", "daemon-reload"]);
 		}
-		checked("systemctl", ["--user", "enable", name]);
-		checked("systemctl", ["--user", "restart", name]);
+		checked("systemctl", ["--user", "enable", service]);
+		checked("systemctl", ["--user", "restart", service]);
 	}
 
 	// 2. 旧的单独推送服务：并进统一服务后停用、删除（先备份）
@@ -127,7 +127,7 @@ async function install(rl?: Interface) {
 		const text = existsSync(oldFile) ? readFileSync(oldFile, "utf8") : undefined;
 		if (!text || !isOldUnit(text)) continue;
 		const backup = join(DATA, `${old}.bak.${stamp}`);
-		if (await ask("移除旧的推送服务", `已并进 ${name}。备份 ${oldFile} 到 ${backup}，停用并删除。`)) {
+		if (await ask("移除旧的推送服务", `已并进 ${service}。备份 ${oldFile} 到 ${backup}，停用并删除。`)) {
 			writeFileSync(backup, text, { mode: 0o600, flag: "wx" });
 			checked("systemctl", ["--user", "disable", "--now", old]);
 			rmSync(oldFile);

@@ -115,3 +115,4 @@ pre#share{white-space:pre-wrap;font:13px/1.6 var(--mono)}
 details.hist{margin:6px 0}
 .shot table.t{table-layout:fixed;word-break:break-word}
 .shot table.t td:nth-child(1){width:22%}.shot table.t td:nth-child(2){width:26%}.shot table.t td:nth-child(4){width:12%}
+.shot .st{white-space:normal}
